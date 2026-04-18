@@ -4,7 +4,9 @@ use log::error;
 use tokio::process::Command;
 use ytpapi2::YoutubeMusicVideoRef;
 
-use crate::{Downloader, DownloadManager, DownloadManagerMessage, MessageHandler, MusicDownloadStatus};
+use crate::{
+    DownloadManager, DownloadManagerMessage, Downloader, MessageHandler, MusicDownloadStatus,
+};
 
 #[derive(Debug)]
 pub enum DownloadError {
@@ -53,9 +55,12 @@ async fn download_with_ytdlp(
     let output = Command::new("yt-dlp")
         .args([
             "--no-playlist",
-            "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio",
-            "--merge-output-format", "mp4",
-            "-o", output_path.to_str().unwrap(),
+            "-f",
+            "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio",
+            "--merge-output-format",
+            "mp4",
+            "-o",
+            output_path.to_str().unwrap(),
             "--no-progress",
             "--quiet",
             &url,
@@ -66,8 +71,9 @@ async fn download_with_ytdlp(
         .await?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        return Err(DownloadError::YtDlpFailed(stderr));
+        return Err(DownloadError::YtDlpFailed(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
     }
 
     sender(DownloadManagerMessage::VideoStatusUpdate(
@@ -84,9 +90,9 @@ async fn download_with_rusty_ytdl(
     output_path: &std::path::Path,
     sender: &MessageHandler,
 ) -> Result<(), DownloadError> {
+    use rusty_ytdl::{DownloadOptions, Video, VideoOptions, VideoQuality, VideoSearchOptions};
     use std::io::Write;
     use std::sync::Arc;
-    use rusty_ytdl::{DownloadOptions, Video, VideoOptions, VideoQuality, VideoSearchOptions};
 
     let search_options = VideoSearchOptions::Custom(Arc::new(|format| {
         format.has_audio && !format.has_video && format.mime_type.container == "mp4"
@@ -149,11 +155,7 @@ async fn download_with_rusty_ytdl(
 }
 
 impl DownloadManager {
-    async fn handle_download(
-        &self,
-        id: &str,
-        sender: MessageHandler,
-    ) -> Result<(), DownloadError> {
+    async fn handle_download(&self, id: &str, sender: MessageHandler) -> Result<(), DownloadError> {
         let file = self.cache_dir.join("downloads").join(format!("{id}.mp4"));
         match self.downloader {
             Downloader::YtDlp => download_with_ytdlp(id, &file, &sender).await,
@@ -209,7 +211,7 @@ impl DownloadManager {
                     song.video_id.clone(),
                     MusicDownloadStatus::DownloadFailed,
                 ));
-                error!("Error downloading {}: {e}", song.video_id);
+                error!("couldn't download {}: {e}", song.video_id);
                 false
             }
         }

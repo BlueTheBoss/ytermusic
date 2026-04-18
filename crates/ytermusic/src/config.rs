@@ -21,7 +21,6 @@ pub struct GlobalConfig {
     /// Default value is 4.
     #[serde(default = "parallel_downloads")]
     pub parallel_downloads: u16,
-    /// Download backend. "ytdlp" (default) or "rusty_ytdl" (legacy).
     #[serde(default)]
     pub downloader: DownloaderConfig,
 }

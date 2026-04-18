@@ -1,4 +1,4 @@
-use download_manager::{Downloader, DownloadManager};
+use download_manager::{DownloadManager, Downloader};
 use once_cell::sync::Lazy;
 
 use crate::{
@@ -17,7 +17,7 @@ pub static DOWNLOAD_MANAGER: Lazy<DownloadManager> = Lazy::new(|| {
         DownloaderConfig::RustyYtdl => Downloader::RustyYtdl,
         #[cfg(not(feature = "rusty-ytdl-backend"))]
         DownloaderConfig::RustyYtdl => {
-            log::warn!("rusty-ytdl-backend feature not compiled in, falling back to yt-dlp");
+            log::warn!("rusty-ytdl-backend not compiled, using yt-dlp");
             Downloader::YtDlp
         }
     };

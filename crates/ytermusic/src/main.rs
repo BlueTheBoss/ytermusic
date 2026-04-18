@@ -218,14 +218,19 @@ async fn app_start_main(updater_r: Receiver<ManagerMessage>, updater_s: Sender<M
     std::fs::create_dir_all(CACHE_DIR.join("downloads")).unwrap();
 
     if CONFIG.global.downloader == crate::config::DownloaderConfig::Ytdlp {
-        match std::process::Command::new("yt-dlp").arg("--version").output() {
+        match std::process::Command::new("yt-dlp")
+            .arg("--version")
+            .output()
+        {
             Ok(out) if out.status.success() => {
-                info!("yt-dlp found: {}", String::from_utf8_lossy(&out.stdout).trim());
+                info!(
+                    "yt-dlp found: {}",
+                    String::from_utf8_lossy(&out.stdout).trim()
+                );
             }
             _ => {
-                println!("Error: yt-dlp not found in PATH.");
-                println!("Install it from https://github.com/yt-dlp/yt-dlp#installation");
-                println!("or set `downloader = \"rusty_ytdl\"` in your config to use the legacy backend.");
+                println!("yt-dlp not found in PATH");
+                println!("get it at https://github.com/yt-dlp/yt-dlp or set downloader = \"rusty_ytdl\" in config");
                 std::io::stdin().read_line(&mut String::new()).unwrap();
                 return;
             }
