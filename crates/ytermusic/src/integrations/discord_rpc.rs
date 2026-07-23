@@ -101,6 +101,7 @@ impl DiscordRPC {
         }
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.current_id = None;
         if let Some(ref mut client) = self.client {

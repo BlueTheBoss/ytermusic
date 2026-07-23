@@ -229,6 +229,7 @@ impl Scrobbler {
         });
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.current_id = None;
         self.played_duration = 0.0;
