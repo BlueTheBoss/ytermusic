@@ -1,12 +1,14 @@
 use std::process::Stdio;
 
-use log::error;
+use log::{debug, error};
 use tokio::process::Command;
 use ytpapi2::YoutubeMusicVideoRef;
 
 use crate::{
     DownloadManager, DownloadManagerMessage, Downloader, MessageHandler, MusicDownloadStatus,
 };
+
+use tokio::task::spawn_blocking;
 
 #[derive(Debug)]
 pub enum DownloadError {
@@ -45,6 +47,7 @@ async fn download_with_ytdlp(
     output_path: &std::path::Path,
     sender: &MessageHandler,
 ) -> Result<(), DownloadError> {
+    debug!("Starting yt-dlp download for video: {}", video_id);
     sender(DownloadManagerMessage::VideoStatusUpdate(
         video_id.to_string(),
         MusicDownloadStatus::Downloading(0),
@@ -60,7 +63,7 @@ async fn download_with_ytdlp(
             "--merge-output-format",
             "mp4",
             "-o",
-            output_path.to_str().unwrap(),
+            output_path.to_str().unwrap_or_default(),
             "--no-progress",
             "--quiet",
             &url,
@@ -71,11 +74,12 @@ async fn download_with_ytdlp(
         .await?;
 
     if !output.status.success() {
-        return Err(DownloadError::YtDlpFailed(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        debug!("yt-dlp failed for {}: {}", video_id, stderr);
+        return Err(DownloadError::YtDlpFailed(stderr));
     }
 
+    debug!("yt-dlp download completed for: {}", video_id);
     sender(DownloadManagerMessage::VideoStatusUpdate(
         video_id.to_string(),
         MusicDownloadStatus::Downloading(100),
@@ -166,7 +170,10 @@ impl DownloadManager {
 
     pub async fn start_download(&self, song: YoutubeMusicVideoRef, s: MessageHandler) -> bool {
         {
-            let mut downloads = self.in_download.lock().unwrap();
+            let mut downloads = match self.in_download.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             if downloads.contains(&song.video_id) {
                 return false;
             }
@@ -178,10 +185,10 @@ impl DownloadManager {
         ));
         let download_path_mp4 = self
             .cache_dir
-            .join(format!("downloads/{}.mp4", &song.video_id));
+            .join(format!("downloads/{}.mp4", song.video_id));
         let download_path_json = self
             .cache_dir
-            .join(format!("downloads/{}.json", &song.video_id));
+            .join(format!("downloads/{}.json", song.video_id));
         if download_path_json.exists() {
             s(DownloadManagerMessage::VideoStatusUpdate(
                 song.video_id.clone(),
@@ -190,22 +197,37 @@ impl DownloadManager {
             return true;
         }
         if download_path_mp4.exists() {
-            std::fs::remove_file(&download_path_mp4).unwrap();
+            let mp4_path = download_path_mp4.clone();
+            let _ = spawn_blocking(move || {
+                let _ = std::fs::remove_file(&mp4_path);
+            }).await;
         }
-        match self.handle_download(&song.video_id, s.clone()).await {
+match self.handle_download(&song.video_id, s.clone()).await {
             Ok(_) => {
-                std::fs::write(download_path_json, serde_json::to_string(&song).unwrap()).unwrap();
+                debug!("Download completed for: {}", song.video_id);
+                let json_path = download_path_json.clone();
+                let song_clone = song.clone();
+                let json = serde_json::to_string(&song_clone).unwrap_or_default();
+                let _ = spawn_blocking(move || {
+                    let _ = std::fs::write(&json_path, json);
+                }).await;
                 self.database.append(song.clone());
                 s(DownloadManagerMessage::VideoStatusUpdate(
                     song.video_id.clone(),
                     MusicDownloadStatus::Downloaded,
                 ));
-                self.in_download.lock().unwrap().remove(&song.video_id);
+                if let Ok(mut downloads) = self.in_download.lock() {
+                    downloads.remove(&song.video_id);
+                }
                 true
             }
             Err(e) => {
+                debug!("Download failed for {}: {:?}", song.video_id, e);
                 if download_path_mp4.exists() {
-                    std::fs::remove_file(download_path_mp4).unwrap();
+                    let mp4_path = download_path_mp4.clone();
+                    let _ = spawn_blocking(move || {
+                        let _ = std::fs::remove_file(&mp4_path);
+                    }).await;
                 }
                 s(DownloadManagerMessage::VideoStatusUpdate(
                     song.video_id.clone(),
@@ -232,6 +254,8 @@ impl DownloadManager {
                 _ = cancelation => {},
             }
         });
-        self.handles.lock().unwrap().push(service);
+        if let Ok(mut handles) = self.handles.lock() {
+            handles.push(service);
+        }
     }
 }

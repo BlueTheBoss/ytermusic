@@ -63,7 +63,7 @@ fn parse_lrc(lrc: &str) -> Vec<LyricLine> {
             lines.push(parsed);
         }
     }
-    lines.sort_by(|a, b| a.timestamp.partial_cmp(&b.timestamp).unwrap());
+    lines.sort_by(|a, b| a.timestamp.partial_cmp(&b.timestamp).unwrap_or(std::cmp::Ordering::Equal));
     lines
 }
 

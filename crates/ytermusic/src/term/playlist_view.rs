@@ -45,11 +45,10 @@ pub struct PlaylistView {
 impl Screen for PlaylistView {
     fn on_mouse_press(&mut self, e: crossterm::event::MouseEvent, r: &Rect) -> EventResponse {
         if let Some(PlayListAction(v, _)) = self.items.on_mouse_press(e, r) {
-            self.sender
+            let _ = self.sender
                 .send(SoundAction::ReplaceQueue(
                     self.videos.iter().skip(v).cloned().collect(),
-                ))
-                .unwrap();
+                ));
             EventResponse::Message(vec![ManagerMessage::PlayerFrom(Screens::Playlist)])
         } else {
             EventResponse::None
@@ -58,11 +57,10 @@ impl Screen for PlaylistView {
 
     fn on_key_press(&mut self, key: KeyEvent, _: &Rect) -> EventResponse {
         if let Some(PlayListAction(v, _)) = self.items.on_key_press(key) {
-            self.sender
+            let _ = self.sender
                 .send(SoundAction::ReplaceQueue(
                     self.videos.iter().skip(*v).cloned().collect(),
-                ))
-                .unwrap();
+                ));
             return EventResponse::Message(vec![ManagerMessage::PlayerFrom(Screens::Playlist)]);
         }
         match key.code {
@@ -82,7 +80,7 @@ impl Screen for PlaylistView {
                 self.items
                     .set_title(format!(" Inspecting {} ", to_bidi_string(&a)));
                 self.goto = screen;
-                let db = DATABASE.read().unwrap();
+                let db = DATABASE.read().unwrap_or_default();
                 self.items.update(
                     m.iter()
                         .enumerate()

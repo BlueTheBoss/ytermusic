@@ -156,6 +156,9 @@ impl Manager {
             queue_viewer: QueueView::new(),
         }
     }
+    pub fn set_updater(&mut self, updater: Sender<ManagerMessage>) {
+        self.login.set_updater(updater);
+    }
     pub fn current_screen(&mut self) -> &mut dyn Screen {
         self.get_screen(self.current_screen)
     }

@@ -19,9 +19,8 @@ pub fn spawn_last_playlist_task(updater_s: Sender<ManagerMessage>) {
         if !playlist.0.starts_with("Last playlist: ") {
             playlist.0 = format!("Last playlist: {}", playlist.0);
         }
-        updater_s
-            .send(ManagerMessage::AddElementToChooser(playlist).pass_to(Screens::Playlist))
-            .unwrap();
+        let _ = updater_s
+            .send(ManagerMessage::AddElementToChooser(playlist).pass_to(Screens::Playlist));
         drop(guard);
         Some(())
     });

@@ -24,15 +24,15 @@ impl SharedEvent {
 
     /// Blocks the current thread until notify() is called.
     pub fn wait(&self) {
-        let mut ready = self.lock.lock().unwrap();
+        let mut ready = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         while !*ready {
-            ready = self.cvar.wait(ready).unwrap();
+            ready = self.cvar.wait(ready).unwrap_or_else(|e| e.into_inner());
         }
     }
 
     /// Wakes up ALL waiting threads.
     pub fn notify(&self) {
-        let mut ready = self.lock.lock().unwrap();
+        let mut ready = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         *ready = true;
         self.cvar.notify_all();
     }
@@ -64,9 +64,10 @@ impl Future for ShutdownSignal {
             Poll::Ready(())
         } else {
             let waker = cx.waker().clone();
-            let mut wakers = WAKERS.lock().unwrap();
-            if !wakers.iter().any(|w| w.will_wake(&waker)) {
-                wakers.push(waker);
+            if let Ok(mut wakers) = WAKERS.lock() {
+                if !wakers.iter().any(|w| w.will_wake(&waker)) {
+                    wakers.push(waker);
+                }
             }
             Poll::Pending
         }
@@ -75,11 +76,11 @@ impl Future for ShutdownSignal {
 
 pub fn shutdown() {
     SHUTDOWN_SENT.store(true, Ordering::Relaxed);
-    let mut wakers = WAKERS.lock().unwrap();
-    for waker in wakers.drain(..) {
-        waker.wake();
+    if let Ok(mut wakers) = WAKERS.lock() {
+        for waker in wakers.drain(..) {
+            waker.wake();
+        }
     }
-    drop(wakers);
     SHUTDOWN_WAKER.notify();
     info!("Shutdown signal sent, waiting for shutdown");
 }

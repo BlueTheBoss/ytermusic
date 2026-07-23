@@ -60,7 +60,7 @@ impl PlayListEntry {
     }
 }
 pub fn format_playlist(name: &str, videos: &[YoutubeMusicVideoRef]) -> String {
-    let db = DATABASE.read().unwrap();
+    let db = DATABASE.read().unwrap_or_default();
     let local_videos = videos
         .iter()
         .filter(|x| db.iter().any(|y| x.video_id == y.video_id))
@@ -144,20 +144,18 @@ pub static PLAYER_RUNNING: AtomicBool = AtomicBool::new(false);
 impl Chooser {
     fn play(&mut self, a: &PlayListEntry) {
         if a.name != "Local musics" {
-            std::fs::write(
+            let _ = std::fs::write(
                 CACHE_DIR.join("last-playlist.json"),
-                serde_json::to_string(&a.tupplelize()).unwrap(),
-            )
-            .unwrap();
+                serde_json::to_string(&a.tupplelize()).unwrap_or_default(),
+            );
         }
-        self.action_sender.send(SoundAction::Cleanup).unwrap();
+        let _ = self.action_sender.send(SoundAction::Cleanup);
         DOWNLOAD_MANAGER.clean(
             ShutdownSignal,
             download_manager_handler(self.action_sender.clone()),
         );
-        self.action_sender
-            .send(SoundAction::AddVideosToQueue(a.videos.clone()))
-            .unwrap();
+        let _ = self.action_sender
+            .send(SoundAction::AddVideosToQueue(a.videos.clone()));
     }
     fn add_element(&mut self, element: (String, Vec<YoutubeMusicVideoRef>)) {
         let entry = PlayListEntry::new(element.0, element.1);

@@ -14,15 +14,13 @@ where
     match a {
         Ok(e) => Some(e),
         Err(a) => {
-            updater
-                .send(ManagerMessage::PassTo(
-                    Screens::DeviceLost,
-                    Box::new(ManagerMessage::Error(
-                        format!("{error_type} {a:?}"),
-                        Box::new(None),
-                    )),
-                ))
-                .unwrap();
+            let _ = updater.send(ManagerMessage::PassTo(
+                Screens::DeviceLost,
+                Box::new(ManagerMessage::Error(
+                    format!("{error_type} {a:?}"),
+                    Box::new(None),
+                )),
+            ));
             None
         }
     }

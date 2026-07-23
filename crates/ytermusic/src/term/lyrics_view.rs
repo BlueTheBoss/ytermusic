@@ -32,13 +32,20 @@ impl LyricsView {
     }
 
     fn find_current_line(&mut self, elapsed_secs: f64) {
-        let mut idx = 0;
-        for (i, line) in self.lyrics.iter().enumerate() {
-            if line.timestamp <= elapsed_secs {
-                idx = i;
+        // Binary search since lyrics are sorted by timestamp
+        let mut low = 0;
+        let mut high = self.lyrics.len();
+        while low < high {
+            let mid = (low + high) / 2;
+            if self.lyrics[mid].timestamp <= elapsed_secs {
+                low = mid + 1;
+            } else {
+                high = mid;
             }
         }
-        self.current_line = idx;
+        // low is the first index where timestamp > elapsed_secs
+        // So the current line is low - 1 (or 0 if low == 0)
+        self.current_line = low.saturating_sub(1);
     }
 }
 
@@ -58,7 +65,7 @@ impl Screen for LyricsView {
     fn render(&mut self, frame: &mut Frame) {
         self.find_current_line(self.current_elapsed);
 
-        let height = frame.size().height.saturating_sub(4) as usize;
+        let height = (frame.size().height.saturating_sub(4) as usize).max(1);
         let start = self.current_line.saturating_sub(height / 2);
         let end = start + height;
 

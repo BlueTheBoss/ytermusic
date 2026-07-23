@@ -99,18 +99,19 @@ impl SoundAction {
                 player.music_status.insert(video, status);
             }
             Self::AddVideosToQueue(video) => {
-                let db = DATABASE.read().unwrap();
-                for v in video {
-                    Self::insert(
-                        player,
-                        v.video_id.clone(),
-                        if db.iter().any(|e| e.video_id == v.video_id) {
-                            MusicDownloadStatus::Downloaded
-                        } else {
-                            MusicDownloadStatus::NotDownloaded
-                        },
-                    );
-                    player.list.push(v)
+                if let Some(db) = DATABASE.read() {
+                    for v in video {
+                        Self::insert(
+                            player,
+                            v.video_id.clone(),
+                            if db.iter().any(|e| e.video_id == v.video_id) {
+                                MusicDownloadStatus::Downloaded
+                            } else {
+                                MusicDownloadStatus::NotDownloaded
+                            },
+                        );
+                        player.list.push(v)
+                    }
                 }
             }
             Self::Previous(a) => {
@@ -118,23 +119,23 @@ impl SoundAction {
                 player.sink.stop();
             }
             Self::RestartPlayer => {
-                player.sink =
+                if let Some(sink) =
                     handle_error_option(&player.updater, "update player", player.sink.update())
-                        .unwrap();
+                {
+                    player.sink = sink;
+                }
                 if let Some(e) = player.current().cloned() {
                     Self::AddVideoUnary(e).apply_sound_action(player);
                 }
             }
             Self::AddVideoUnary(video) => {
+                let is_downloaded = DATABASE.read().is_some_and(|db| {
+                    db.iter().any(|e| e.video_id == video.video_id)
+                });
                 Self::insert(
                     player,
                     video.video_id.clone(),
-                    if DATABASE
-                        .read()
-                        .unwrap()
-                        .iter()
-                        .any(|e| e.video_id == video.video_id)
-                    {
+                    if is_downloaded {
                         MusicDownloadStatus::Downloaded
                     } else {
                         MusicDownloadStatus::NotDownloaded
@@ -143,12 +144,16 @@ impl SoundAction {
                 if player.list.is_empty() {
                     player.list.push(video);
                 } else {
-                    player.list.insert(player.current + 1, video);
+                    let idx = player.list.len().min(player.current + 1);
+                    player.list.insert(idx, video);
                 }
             }
             Self::DeleteVideoUnary => {
                 let index_list = player.list_selector.get_relative_position();
-                let video = player.relative_current(index_list).cloned().unwrap();
+                let video = match player.relative_current(index_list).cloned() {
+                    Some(v) => v,
+                    None => return,
+                };
                 if matches!(
                     player.music_status.get(&video.video_id), // not sure abt conditions, needs testing
                     Some(
@@ -175,13 +180,13 @@ impl SoundAction {
                 DATABASE.remove_video(&video);
 
                 let cache_folder = CACHE_DIR.join("downloads");
-                let json_path = cache_folder.join(format!("{}.json", &video.video_id));
+                let json_path = cache_folder.join(format!("{}.json", video.video_id));
                 match fs::remove_file(json_path) {
                     Ok(_) => trace!("Deleted JSON file"),
                     Err(e) => error!("Error deleting JSON video file: {}", e),
                 }
 
-                let mp4_path = cache_folder.join(format!("{}.mp4", &video.video_id));
+                let mp4_path = cache_folder.join(format!("{}.mp4", video.video_id));
                 match fs::remove_file(mp4_path) {
                     Ok(_) => trace!("Deleted MP4 file"),
                     Err(e) => error!("Error deleting MP4 video file: {}", e),
@@ -238,9 +243,7 @@ mod tests {
 pub fn download_manager_handler(sender: Sender<SoundAction>) -> MessageHandler {
     Arc::new(move |message| match message {
         DownloadManagerMessage::VideoStatusUpdate(video, status) => {
-            sender
-                .send(SoundAction::VideoStatusUpdate(video, status))
-                .unwrap();
+            let _ = sender.send(SoundAction::VideoStatusUpdate(video, status));
         }
     })
 }

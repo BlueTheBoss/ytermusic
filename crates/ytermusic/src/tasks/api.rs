@@ -47,7 +47,7 @@ pub fn spawn_api_task(updater_s: Sender<ManagerMessage>) {
             }
         });
 
-        if AUTH_TOKEN.read().unwrap().is_some() {
+        if AUTH_TOKEN.read().unwrap_or_else(|e| e.into_inner()).is_some() {
             let api_ = api.clone();
             let updater_s_ = updater_s.clone();
             set.spawn(async move {
@@ -84,7 +84,9 @@ pub fn spawn_api_task(updater_s: Sender<ManagerMessage>) {
         }
 
         while let Some(e) = set.join_next().await {
-            e.unwrap();
+            if let Err(e) = e {
+                error!("API task panicked: {e:?}");
+            }
         }
 
         drop(guard);
@@ -92,7 +94,7 @@ pub fn spawn_api_task(updater_s: Sender<ManagerMessage>) {
 }
 
 async fn create_api_instance() -> Option<YoutubeMusicInstance> {
-    let token = AUTH_TOKEN.read().unwrap().clone();
+    let token = AUTH_TOKEN.read().unwrap_or_else(|e| e.into_inner()).clone();
     if let Some(token) = token {
         if !token.access_token.is_empty() {
             info!("Using OAuth token for API instance");
@@ -138,7 +140,7 @@ fn spawn_browse_playlist_task(
         return;
     }
     {
-        let mut k = BROWSED_PLAYLISTS.lock().unwrap();
+        let mut k = BROWSED_PLAYLISTS.lock().unwrap_or_else(|e| e.into_inner());
         if k.iter()
             .any(|(name, id)| name == &playlist.name && id == &playlist.browse_id)
         {

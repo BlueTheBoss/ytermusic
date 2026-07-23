@@ -101,36 +101,36 @@ impl Media {
 fn connect(mpris: &mut MediaControls, sender: Sender<SoundAction>) -> Result<(), Error> {
     mpris.attach(move |e| match e {
         MediaControlEvent::Toggle | MediaControlEvent::Play | MediaControlEvent::Pause => {
-            sender.send(SoundAction::PlayPause).unwrap();
+            let _ = sender.send(SoundAction::PlayPause);
         }
         MediaControlEvent::Next => {
-            sender.send(SoundAction::Next(1)).unwrap();
+            let _ = sender.send(SoundAction::Next(1));
         }
         MediaControlEvent::Previous => {
-            sender.send(SoundAction::Previous(1)).unwrap();
+            let _ = sender.send(SoundAction::Previous(1));
         }
         MediaControlEvent::Stop => {
-            sender.send(SoundAction::Cleanup).unwrap();
+            let _ = sender.send(SoundAction::Cleanup);
         }
         MediaControlEvent::Seek(a) => match a {
             souvlaki::SeekDirection::Forward => {
-                sender.send(SoundAction::Forward).unwrap();
+                let _ = sender.send(SoundAction::Forward);
             }
             souvlaki::SeekDirection::Backward => {
-                sender.send(SoundAction::Backward).unwrap();
+                let _ = sender.send(SoundAction::Backward);
             }
         },
         // TODO(functionnality): implement seek amount
         MediaControlEvent::SeekBy(a, _b) => {
             if a == SeekDirection::Forward {
-                sender.send(SoundAction::Forward).unwrap();
+                let _ = sender.send(SoundAction::Forward);
             } else {
-                sender.send(SoundAction::Backward).unwrap();
+                let _ = sender.send(SoundAction::Backward);
             }
         }
 
         MediaControlEvent::SetPosition(a) => {
-            sender.send(SoundAction::SeekTo(a.0)).unwrap();
+            let _ = sender.send(SoundAction::SeekTo(a.0));
         }
         MediaControlEvent::OpenUri(a) => {
             log::warn!("Unhandled MPRIS OpenUri: {a:?}");
@@ -142,7 +142,7 @@ fn connect(mpris: &mut MediaControls, sender: Sender<SoundAction>) -> Result<(),
             shutdown();
         }
         MediaControlEvent::SetVolume(e) => {
-            sender.send(SoundAction::SetVolume(e as f32)).unwrap();
+            let _ = sender.send(SoundAction::SetVolume(e as f32));
         }
     })
 }
@@ -241,15 +241,13 @@ fn get_handle(updater: &Sender<ManagerMessage>) -> Option<MediaControls> {
         {
             Some(h.hwnd)
         } else {
-            updater
-                .send(ManagerMessage::PassTo(
-                    Screens::DeviceLost,
-                    Box::new(ManagerMessage::Error(
-                        "No window handle found".to_string(),
-                        Box::new(None),
-                    )),
-                ))
-                .unwrap();
+            let _ = updater.send(ManagerMessage::PassTo(
+                Screens::DeviceLost,
+                Box::new(ManagerMessage::Error(
+                    "No window handle found".to_string(),
+                    Box::new(None),
+                )),
+            ));
             return None;
         },
     };

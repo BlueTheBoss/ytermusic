@@ -13,6 +13,7 @@ use super::{EventResponse, ManagerMessage, Screen, Screens};
 pub struct Login {
     state: LoginState,
     goto: Screens,
+    updater: Option<flume::Sender<ManagerMessage>>,
 }
 
 enum LoginState {
@@ -31,7 +32,12 @@ impl Login {
         Self {
             state: LoginState::Init,
             goto: Screens::Playlist,
+            updater: None,
         }
+    }
+
+    pub fn set_updater(&mut self, updater: flume::Sender<ManagerMessage>) {
+        self.updater = Some(updater);
     }
 
     pub fn set_goto(&mut self, screen: Screens) {
@@ -44,30 +50,29 @@ impl Login {
 
     fn start_login_flow(&mut self) {
         self.state = LoginState::WaitingCode;
-        let (tx, _rx) = flume::unbounded::<ManagerMessage>();
+        let tx = match self.updater.clone() {
+            Some(tx) => tx,
+            None => return,
+        };
         run_service(async move {
             match oauth::request_device_code().await {
                 Ok(code_info) => {
-                    tx
-                        .send(ManagerMessage::LoginCode(
-                            code_info.verification_url.clone(),
-                            code_info.user_code.clone(),
-                        ))
-                        .unwrap();
+                    let _ = tx.send(ManagerMessage::LoginCode(
+                        code_info.verification_url.clone(),
+                        code_info.user_code.clone(),
+                    ));
                     match oauth::poll_for_token(&code_info.device_code, code_info.interval).await {
                         Ok(token) => {
                             save_token(&token);
-                            tx.send(ManagerMessage::LoginSuccess).unwrap();
+                            let _ = tx.send(ManagerMessage::LoginSuccess);
                         }
                         Err(e) => {
-                            tx.send(ManagerMessage::LoginError(format!("{e:?}")))
-                                .unwrap();
+                            let _ = tx.send(ManagerMessage::LoginError(format!("{e:?}")));
                         }
                     }
                 }
                 Err(e) => {
-                    tx.send(ManagerMessage::LoginError(format!("{e:?}")))
-                        .unwrap();
+                    let _ = tx.send(ManagerMessage::LoginError(format!("{e:?}")));
                 }
             }
         });

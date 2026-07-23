@@ -1,5 +1,6 @@
 mod task;
 
+use log::debug;
 use std::{
     collections::{HashSet, VecDeque},
     path::PathBuf,
@@ -56,11 +57,13 @@ impl DownloadManager {
     }
 
     pub fn remove_from_in_downloads(&self, video: &String) {
-        self.in_download.lock().unwrap().remove(video);
+        if let Ok(mut guard) = self.in_download.lock() {
+            guard.remove(video);
+        }
     }
 
     fn take(&self) -> Option<YoutubeMusicVideoRef> {
-        self.download_list.lock().unwrap().pop_front()
+        self.download_list.lock().ok()?.pop_front()
     }
 
     /// This has to be called as a service stream
@@ -75,8 +78,10 @@ impl DownloadManager {
         let fut = async move {
             loop {
                 if let Some(id) = self.take() {
+                    debug!("Starting download for: {}", id);
                     self.start_download(id, sender.clone()).await;
                 } else {
+                    debug!("No downloads in queue, waiting for notify...");
                     self.notify.notified().await;
                 }
             }
@@ -87,7 +92,9 @@ impl DownloadManager {
                 _ = cancelation => {},
             }
         });
-        self.handles.lock().unwrap().push(service);
+        if let Ok(mut handles) = self.handles.lock() {
+            handles.push(service);
+        }
     }
 
     pub fn spawn_system(
@@ -105,33 +112,38 @@ impl DownloadManager {
         cancelation: impl Future<Output = ()> + Clone + Send + 'static,
         sender: MessageHandler,
     ) {
-        self.download_list.lock().unwrap().clear();
-        self.in_download.lock().unwrap().clear();
-        {
-            let mut handle = self.handles.lock().unwrap();
-            for i in handle.iter() {
+        if let Ok(mut list) = self.download_list.lock() {
+            list.clear();
+        }
+        if let Ok(mut set) = self.in_download.lock() {
+            set.clear();
+        }
+        if let Ok(handles) = self.handles.lock() {
+            for i in handles.iter() {
                 i.abort()
             }
+        }
+        if let Ok(mut handle) = self.handles.lock() {
             handle.clear();
         }
         self.spawn_system(cancelation, sender);
     }
 
     pub fn set_download_list(&self, to_add: impl IntoIterator<Item = YoutubeMusicVideoRef>) {
-        let mut list = self.download_list.lock().unwrap();
-        list.clear();
-        list.extend(to_add);
-        drop(list);
+        if let Ok(mut list) = self.download_list.lock() {
+            list.clear();
+            list.extend(to_add);
+        }
         self.notify.notify_one();
     }
 
     pub fn add_to_download_list(&self, to_add: impl IntoIterator<Item = YoutubeMusicVideoRef>) {
-        let mut list = self.download_list.lock().unwrap();
-        let was_empty = list.is_empty();
-        list.extend(to_add);
-        drop(list);
-        if was_empty {
-            self.notify.notify_one();
+        if let Ok(mut list) = self.download_list.lock() {
+            let was_empty = list.is_empty();
+            list.extend(to_add);
+            if was_empty {
+                self.notify.notify_one();
+            }
         }
     }
 }

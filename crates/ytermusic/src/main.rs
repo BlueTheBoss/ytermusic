@@ -97,7 +97,7 @@ fn main() {
 async fn app_start_main(updater_r: Receiver<ManagerMessage>, updater_s: Sender<ManagerMessage>) {
     STARTUP_TIME.log("Init");
 
-    std::fs::create_dir_all(CACHE_DIR.join("downloads")).unwrap();
+    let _ = std::fs::create_dir_all(CACHE_DIR.join("downloads"));
 
     if CONFIG.global.downloader == crate::config::DownloaderConfig::Ytdlp {
         match std::process::Command::new("yt-dlp")
@@ -113,14 +113,14 @@ async fn app_start_main(updater_r: Receiver<ManagerMessage>, updater_s: Sender<M
             _ => {
                 println!("yt-dlp not found in PATH");
                 println!("get it at https://github.com/yt-dlp/yt-dlp or set downloader = \"rusty_ytdl\" in config");
-                std::io::stdin().read_line(&mut String::new()).unwrap();
+                let _ = std::io::stdin().read_line(&mut String::new());
                 return;
             }
         }
     }
 
     try_load_oauth_token().await;
-    let is_authenticated = AUTH_TOKEN.read().unwrap().is_some();
+    let is_authenticated = AUTH_TOKEN.read().unwrap_or_else(|e| e.into_inner()).is_some();
 
     if is_authenticated {
         info!("OAuth token loaded, using authenticated mode");
@@ -140,11 +140,14 @@ async fn app_start_main(updater_r: Receiver<ManagerMessage>, updater_s: Sender<M
     STARTUP_TIME.log("Spawned last playlist task");
     tasks::api::spawn_api_task(updater_s.clone());
     STARTUP_TIME.log("Spawned api task");
-    tasks::local_musics::spawn_local_musics_task(updater_s);
+    tasks::local_musics::spawn_local_musics_task(updater_s.clone());
 
     STARTUP_TIME.log("Running manager");
     let mut manager = Manager::new(sa, player).await;
-    manager.run(&updater_r).unwrap();
+    manager.set_updater(updater_s);
+    if let Err(e) = manager.run(&updater_r) {
+        error!("Terminal error: {e}");
+    }
 }
 
 async fn try_load_oauth_token() {
@@ -155,7 +158,7 @@ async fn try_load_oauth_token() {
         }
         if token.expires_at <= std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs()
         {
             info!("OAuth token expired, refreshing");
@@ -165,7 +168,7 @@ async fn try_load_oauth_token() {
                     if let Some(dirs) = get_project_dirs() {
                         let path = dirs.config_dir().join("oauth.json");
                         let _ = std::fs::create_dir_all(dirs.config_dir());
-                        let _ = std::fs::write(&path, serde_json::to_string_pretty(&token).unwrap());
+                        let _ = std::fs::write(&path, serde_json::to_string_pretty(&token).unwrap_or_default());
                     }
                 }
                 Err(e) => {
@@ -174,7 +177,7 @@ async fn try_load_oauth_token() {
                 }
             }
         }
-        let mut guard = AUTH_TOKEN.write().unwrap();
+        let mut guard = AUTH_TOKEN.write().unwrap_or_else(|e| e.into_inner());
         *guard = Some(token);
     }
 }

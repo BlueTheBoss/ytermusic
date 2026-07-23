@@ -1,4 +1,5 @@
 use log::{error, info, trace};
+use std::collections::HashMap;
 
 #[cfg(test)]
 mod tests {
@@ -31,7 +32,7 @@ mod tests {
 
         scrobbler.current_id = Some("song1".to_string());
         scrobbler.played_duration = 15.0;
-        let video = make_video("song1", 29);
+        let _video = make_video("song1", 29);
         let should = match 29.0_f64 {
             dur if dur > 30.0 => {
                 let half = dur * 0.5;
@@ -103,7 +104,7 @@ mod tests {
         assert!(!scrobbler.scrobbled.contains("new"));
     }
 }
-use std::collections::{HashMap, HashSet};
+use hashbrown::HashSet as FxHashSet;
 use std::time::Duration;
 use ytpapi2::YoutubeMusicVideoRef;
 
@@ -117,7 +118,7 @@ pub struct ScrobbleConfig {
 
 pub struct Scrobbler {
     config: ScrobbleConfig,
-    scrobbled: HashSet<String>,
+    scrobbled: FxHashSet<String>,
     current_id: Option<String>,
     played_duration: f64,
 }
@@ -139,7 +140,7 @@ impl Scrobbler {
         }
         Self {
             config,
-            scrobbled: HashSet::new(),
+            scrobbled: FxHashSet::new(),
             current_id: None,
             played_duration: 0.0,
         }

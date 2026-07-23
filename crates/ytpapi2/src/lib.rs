@@ -1,6 +1,7 @@
 use std::{
     path::Path,
     string::FromUtf8Error,
+    sync::OnceLock,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -27,6 +28,18 @@ pub type Result<T> = std::result::Result<T, YoutubeMusicError>;
 const YTM_DOMAIN: &str = "https://music.youtube.com";
 const YTM_USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0";
+
+/// Returns a shared reqwest::Client for connection pooling
+fn shared_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::ClientBuilder::default()
+            .pool_max_idle_per_host(10)
+            .pool_idle_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("Failed to create shared HTTP client")
+    })
+}
 
 #[derive(Debug, Clone, PartialOrd, Eq, Ord, PartialEq, Hash, Serialize, Deserialize)]
 pub struct YoutubeMusicPlaylistRef {
@@ -177,10 +190,7 @@ impl YoutubeMusicInstance {
             YTM_USER_AGENT.parse().unwrap(),
         );
 
-        let rest_client = reqwest::ClientBuilder::default()
-            .default_headers(headers.clone())
-            .build()
-            .map_err(YoutubeMusicError::RequestError)?;
+        let rest_client = shared_client();
 
         let response: String = rest_client
             .get(YTM_DOMAIN)
@@ -200,20 +210,18 @@ impl YoutubeMusicInstance {
                 api_key: api_key.to_string(),
                 client_version: client_version.to_string(),
             },
-            client: rest_client,
+            client: rest_client.clone(),
         })
     }
 
     pub async fn new_oauth(access_token: String) -> Result<Self> {
         trace!("Creating new YoutubeMusicInstance (OAuth)");
-        let client = reqwest::ClientBuilder::default()
-            .build()
-            .map_err(YoutubeMusicError::RequestError)?;
+        let client = shared_client();
 
         Ok(Self {
             auth: AuthMode::Oauth { access_token },
             spec: ClientSpec::TvHtml5,
-            client,
+            client: client.clone(),
         })
     }
 
@@ -694,6 +702,7 @@ fn get_account_id() -> Option<String> {
 }
 
 #[test]
+#[ignore = "requires external test files (headers.txt, account_id.txt) and network access"]
 fn advanced_like() {
     use tokio::runtime::Runtime;
     Runtime::new().unwrap().block_on(async {
@@ -711,6 +720,7 @@ fn advanced_like() {
 }
 
 #[test]
+#[ignore = "requires external test files (headers.txt, account_id.txt) and network access"]
 fn advanced_test() {
     use tokio::runtime::Runtime;
     Runtime::new().unwrap().block_on(async {
@@ -726,6 +736,7 @@ fn advanced_test() {
 }
 
 #[test]
+#[ignore = "requires external test files (headers.txt, account_id.txt) and network access"]
 fn home_test() {
     use tokio::runtime::Runtime;
     Runtime::new().unwrap().block_on(async {

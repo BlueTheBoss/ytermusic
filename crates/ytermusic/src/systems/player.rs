@@ -1,11 +1,12 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     sync::atomic::Ordering,
 };
 
 use common_structs::MusicDownloadStatus;
 use flume::{unbounded, Receiver, Sender};
-use log::{error, info};
+use hashbrown::HashMap as FxHashMap;
+use log::{debug, error, info, trace};
 use player::{PlayError, Player, PlayerOptions};
 
 use ytpapi2::YoutubeMusicVideoRef;
@@ -20,7 +21,7 @@ use crate::{
 
 use crate::{
     consts::{CACHE_DIR, CONFIG},
-    errors::{handle_error, handle_error_option},
+    errors::{handle_error},
     structures::{media::Media, sound_action::SoundAction},
     systems::DOWNLOAD_MANAGER,
     term::{list_selector::ListSelector, playlist::PLAYER_RUNNING, ManagerMessage, Screens},
@@ -32,7 +33,7 @@ pub struct PlayerState {
     pub list: Vec<YoutubeMusicVideoRef>,
     pub current: usize,
     pub rtcurrent: Option<YoutubeMusicVideoRef>,
-    pub music_status: HashMap<String, MusicDownloadStatus>,
+    pub music_status: FxHashMap<String, MusicDownloadStatus>,
     pub list_selector: ListSelector,
     pub controls: Media,
     pub sink: Player,
@@ -58,20 +59,21 @@ impl PlayerState {
         updater: Sender<ManagerMessage>,
     ) -> Self {
         let (stream_error_sender, stream_error_receiver) = unbounded::<PlayError>();
-        let sink = handle_error_option(
-            &updater,
-            "player creation error",
-            Player::new(
-                stream_error_sender,
-                PlayerOptions::new(CONFIG.player.initial_volume),
-            ),
-        )
-        .unwrap();
+        let sink = match Player::new(
+            stream_error_sender,
+            PlayerOptions::new(CONFIG.player.initial_volume),
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                handle_error(&updater, "player creation error", Err::<(), String>(format!("{e:?}")));
+                std::process::exit(1);
+            }
+        };
         Self {
             controls: Media::new(updater.clone(), soundaction_sender.clone()),
             soundaction_receiver,
             list_selector: ListSelector::default(),
-            music_status: HashMap::new(),
+            music_status: FxHashMap::new(),
             updater,
             stream_error_receiver,
             soundaction_sender,
@@ -127,12 +129,16 @@ impl PlayerState {
 
     pub fn update(&mut self) {
         PLAYER_RUNNING.store(self.current().is_some(), Ordering::SeqCst);
+        debug!("Player update - current: {:?}, list_len: {}, status: {:?}", 
+            self.current().map(|v| &v.video_id), self.list.len(), 
+            self.current().and_then(|v| self.music_status.get(&v.video_id)));
         self.update_controls();
         self.handle_stream_errors();
         if self.current > self.list.len() {
             self.current = self.list.len();
         }
         while let Ok(e) = self.soundaction_receiver.try_recv() {
+            debug!("Received sound action: {:?}", e);
             e.apply_sound_action(self);
         }
         if self.is_current_download_failed() {
@@ -171,37 +177,31 @@ impl PlayerState {
             }
 
             if self.is_current_downloaded() {
+                trace!("Current song is downloaded, attempting playback");
                 if let Some(video) = self.current().cloned() {
-                    let k = CACHE_DIR.join(format!("downloads/{}.mp4", &video.video_id));
+                    let k = CACHE_DIR.join(format!("downloads/{}.mp4", video.video_id));
+                    trace!("Attempting to play: {:?}", k);
                     if let Err(e) = self.sink.play(k.as_path()) {
                         if matches!(e, PlayError::DecoderError(_)) {
                             // Cleaning the file
 
                             DATABASE.remove_video(&video);
-                            handle_error(
-                                &self.updater,
-                                "invalid cleaning MP4",
-                                std::fs::remove_file(k),
-                            );
-                            handle_error(
-                                &self.updater,
-                                "invalid cleaning JSON",
-                                std::fs::remove_file(
-                                    CACHE_DIR.join(format!("downloads/{}.json", &video.video_id)),
-                                ),
-                            );
+                            let mp4_path = k.clone();
+                            let json_path = CACHE_DIR.join(format!("downloads/{}.json", video.video_id));
+                            tokio::task::spawn_blocking(move || {
+                                let _ = std::fs::remove_file(&mp4_path);
+                                let _ = std::fs::remove_file(&json_path);
+                            });
                             self.current = 0;
                             DATABASE.write();
                         } else {
-                            self.updater
-                                .send(ManagerMessage::PassTo(
+                            let _ = self.updater.send(ManagerMessage::PassTo(
                                     Screens::DeviceLost,
                                     Box::new(ManagerMessage::Error(
                                         format!("{e:?}"),
                                         Box::new(None),
                                     )),
-                                ))
-                                .unwrap();
+                                ));
                         }
                     }
                 }
@@ -220,10 +220,12 @@ impl PlayerState {
             .take(12)
             .cloned()
             .collect::<VecDeque<_>>();
+        trace!("Queuing {} songs for download", to_download.len());
         let new_ids: Vec<String> = to_download.iter().map(|v| v.video_id.clone()).collect();
         if new_ids != self.last_download_list {
             self.last_download_list = new_ids;
             DOWNLOAD_MANAGER.set_download_list(to_download);
+            trace!("Updated download manager queue");
         }
 
         let current_video = self.current().cloned();

@@ -157,18 +157,12 @@ pub struct SearchConfig {}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[non_exhaustive]
+#[derive(Default)]
 pub struct DiscordConfig {
     #[serde(default)]
     pub client_id: String,
 }
 
-impl Default for DiscordConfig {
-    fn default() -> Self {
-        Self {
-            client_id: String::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -222,6 +216,7 @@ impl Default for Keybinds {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[non_exhaustive]
+#[derive(Default)]
 pub struct ScrobbleConfig {
     #[serde(default)]
     pub lastfm_api_key: String,
@@ -233,16 +228,6 @@ pub struct ScrobbleConfig {
     pub listenbrainz_token: String,
 }
 
-impl Default for ScrobbleConfig {
-    fn default() -> Self {
-        Self {
-            lastfm_api_key: String::new(),
-            lastfm_shared_secret: String::new(),
-            lastfm_session: String::new(),
-            listenbrainz_token: String::new(),
-        }
-    }
-}
 
 #[allow(unused)]
 #[derive(Debug, Default, Deserialize, Serialize)]

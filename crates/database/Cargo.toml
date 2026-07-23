@@ -8,3 +8,4 @@ varuint = "0.7.1"
 ytpapi2.workspace = true
 log = "*"
 serde_json = "1.0.114"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "fs", "macros"] }

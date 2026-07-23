@@ -66,7 +66,7 @@ impl Screen for Search {
         if let Some(e) = self
             .list
             .write()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .on_mouse_press(mouse_event, &splitted[1])
         {
             self.execute_status(e, mouse_event.modifiers)
@@ -79,7 +79,7 @@ impl Screen for Search {
         if KeyCode::Esc == key.code {
             return ManagerMessage::ChangeState(self.goto).event();
         }
-        if let Some(e) = self.list.write().unwrap().on_key_press(key) {
+        if let Some(e) = self.list.write().unwrap_or_else(|e| e.into_inner()).on_key_press(key) {
             return self.execute_status(e.clone(), key.modifiers);
         }
         let textbefore = self.text.trim().to_owned();
@@ -118,7 +118,7 @@ impl Screen for Search {
             })
             .take(100)
             .collect::<Vec<_>>();
-        self.list.write().unwrap().update_contents(local.clone());
+        self.list.write().unwrap_or_else(|e| e.into_inner()).update_contents(local.clone());
 
         if let Some(api) = self.api.clone() {
             let text = self.text.clone();
@@ -138,7 +138,7 @@ impl Screen for Search {
                             let id = video.video_id.clone();
                             item.push((
                                 format!(" {} ", to_bidi_string(&video.to_string())),
-                                if DATABASE.read().unwrap().iter().any(|x| x.video_id == id) {
+                                if DATABASE.read().unwrap_or_default().iter().any(|x| x.video_id == id) {
                                     Status::Local(video)
                                 } else {
                                     Status::Unknown(video)
@@ -154,7 +154,7 @@ impl Screen for Search {
                                         if e.is_empty() {
                                             return;
                                         }
-                                        items.write().unwrap().add_element((
+                                        items.write().unwrap_or_else(|e| e.into_inner()).add_element((
                                             format_playlist(
                                                 &format!(
                                                     " [P] {} ({})",
@@ -179,7 +179,7 @@ impl Screen for Search {
                 }
                 let mut local = local;
                 local.append(&mut item);
-                items.write().unwrap().update_contents(local);
+                items.write().unwrap_or_else(|e| e.into_inner()).update_contents(local);
             }));
         }
 
@@ -207,7 +207,7 @@ impl Screen for Search {
                 ),
             splitted[0],
         );
-        let items = self.list.read().unwrap();
+        let items = self.list.read().unwrap_or_else(|e| e.into_inner());
         frame.render_widget(&*items, splitted[1]);
     }
 
@@ -243,7 +243,7 @@ impl Search {
             Status::Local(e) | Status::Unknown(e) => {
                 self.action_sender
                     .send(SoundAction::AddVideoUnary(e.clone()))
-                    .unwrap();
+                    .ok();
                 DOWNLOAD_MANAGER.start_task_unary(
                     download_manager_handler(self.action_sender.clone()),
                     e,
@@ -263,7 +263,11 @@ impl Search {
 }
 
 async fn create_search_api() -> Option<Arc<YoutubeMusicInstance>> {
-    if let Some(token) = AUTH_TOKEN.read().unwrap().as_ref() {
+    let token = AUTH_TOKEN
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    if let Some(token) = token.as_ref() {
         if !token.access_token.is_empty() {
             match YoutubeMusicInstance::new_oauth(token.access_token.clone()).await {
                 Ok(api) => {

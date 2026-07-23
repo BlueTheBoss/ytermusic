@@ -171,7 +171,10 @@ impl Player {
         if self.is_finished() {
             return;
         }
-        let file = self.data.current_file().expect("Current file not set");
+        let file = match self.data.current_file() {
+            Some(f) => f,
+            None => return,
+        };
 
         if let Err(e) = self.sink.try_seek(time) {
             log::error!("Seek error: {}", e);

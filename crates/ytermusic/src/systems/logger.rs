@@ -11,15 +11,16 @@ static LOG: Lazy<Sender<String>> = Lazy::new(|| {
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(filepath)
-            .unwrap();
+            .open(filepath);
         while let Ok(e) = rx.recv() {
             buffer.clear();
             buffer.push_str(&(e + "\n"));
             while let Ok(e) = rx.try_recv() {
                 buffer.push_str(&(e + "\n"));
             }
-            file.write_all(buffer.as_bytes()).unwrap();
+            if let Ok(ref mut f) = file {
+                let _ = f.write_all(buffer.as_bytes());
+            }
         }
     });
     tx
@@ -71,16 +72,15 @@ impl log::Log for SimpleLogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            if FILTER.iter().any(|x| record.file().unwrap().contains(x)) {
+            if FILTER.iter().any(|x| record.file().unwrap_or_default().contains(x)) {
                 return;
             }
-            LOG.send(format!(
+            let _ = LOG.send(format!(
                 "{} - {} [{}]",
                 record.level(),
                 record.args(),
                 record.file().unwrap_or_default()
-            ))
-            .unwrap();
+            ));
         }
     }
 

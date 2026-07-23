@@ -1,166 +1,86 @@
-use std::{fs::OpenOptions, io::Write};
+use std::{fs::OpenOptions, io::{Read, Write}, path::Path, sync::{Arc, RwLock}};
 
-use log::error;
-use varuint::WriteVarint;
+use varuint::{ReadVarint, WriteVarint};
 use ytpapi2::YoutubeMusicVideoRef;
 
 use crate::YTLocalDatabase;
 
-impl YTLocalDatabase {
-    pub fn write(&self) {
-        let db = match self.references.read() {
-            Ok(db) => db,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        let mut file = match OpenOptions::new()
-            .write(true)
-            .append(false)
-            .create(true)
-            .truncate(true)
-            .open(self.cache_dir.join("db.bin"))
-        {
-            Ok(f) => f,
-            Err(e) => {
-                error!("Failed to open database file for writing: {e}");
-                return;
-            }
-        };
-        for video in db.iter() {
-            write_video(&mut file, video)
-        }
+/// Synchronous write for internal use (async wrappers call this)
+pub fn write_sync_with_db(cache_dir: &Path, references: &Arc<RwLock<Vec<YoutubeMusicVideoRef>>>) -> std::io::Result<()> {
+    let db = match references.read() {
+        Ok(db) => db,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(cache_dir.join("db.bin"))?;
+    for video in &*db {
+        write_video(&mut file, video)?;
     }
-}
-impl YTLocalDatabase {
-    pub fn fix_db(&self) {
-        let mut db = match self.references.write() {
-            Ok(db) => db,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        db.clear();
-        let cache_folder = self.cache_dir.join("downloads");
-        if !cache_folder.is_dir() {
-            println!(
-                "[WARN] The download folder in the cache wasn't found ({:?})",
-                cache_folder
-            );
-            return;
-        }
-        let read_dir = match std::fs::read_dir(&cache_folder) {
-            Ok(d) => d,
-            Err(e) => {
-                println!("[ERROR] Failed to read cache directory: {e:?}");
-                return;
-            }
-        };
-        for entry in read_dir.flatten() {
-            let path = entry.path();
-            // Check if the file is a json file (+ sloppy check if there is any files or directory)
-            if path.extension().unwrap_or_default() != "json" {
-                continue;
-            }
-            // Read the file if not readable do not add it to the database
-            let content = match std::fs::read_to_string(&path) {
-                Ok(content) => content,
-                Err(e) => {
-                    match std::fs::remove_file(&path) {
-                        Ok(_) => println!(
-                            "[INFO] Removing file {:?} because the file is not readable: {e:?}",
-                            path.file_name()
-                        ),
-                        Err(ef) => println!(
-                            "[ERROR] file {:?} is not readable: {e:?}, but could not be deleted: {ef:?}",
-                            path.file_name()
-                        ),
-                    }
-                    continue;
-                }
-            };
-            // Check if the file is a valid json file
-            let video = match serde_json::from_str::<YoutubeMusicVideoRef>(&content) {
-                Ok(parsed) => parsed,
-                Err(e) => {
-                    match std::fs::remove_file(&path) {
-                        Ok(_) => println!(
-                            "[INFO] Removing file {:?} because the file is not a valid json file: {e:?}",
-                            path.file_name()
-                        ),
-                        Err(ef) => println!(
-                            "[ERROR] file {:?} is not a valid json file: {e:?}, but could not be deleted: {ef:?}",
-                            path.file_name()
-                        ),
-                    }
-                    continue;
-                }
-            };
-            // Check if the video file exists
-            let video_file = cache_folder.join(format!("{}.mp4", video.video_id));
-            if !video_file.exists() {
-                match std::fs::remove_file(&path) {
-                    Ok(_) => println!(
-                        "[INFO] Removing file {:?} because the video file does not exist",
-                        path.file_name()
-                    ),
-                    Err(ef) => println!(
-                        "[ERROR] video assocated to file {:?} does not exist, but the file could not be deleted: {ef:?}",
-                        path.file_name()
-                    ),
-                }
-                continue;
-            }
-            // Read the video file
-            let video_file = match std::fs::read(&video_file) {
-                Ok(video_file) => video_file,
-                Err(e) => {
-                    match std::fs::remove_file(&path) {
-                        Ok(_) => println!(
-                            "[INFO] Removing file {:?} because the video file is not readable: {e:?}",
-                            path.file_name()
-                        ),
-                        Err(ef) => println!(
-                            "[ERROR] video associated to file {:?} is not readable: {e:?}, but the file could not be deleted: {ef:?}",
-                            path.file_name()
-                        ),
-                    }
-                    continue;
-                }
-            };
-            // Check if the video file contains the header
-            if !video_file.starts_with(&[
-                0, 0, 0, 24, 102, 116, 121, 112, 100, 97, 115, 104, 0, 0, 0, 0,
-            ]) {
-                match std::fs::remove_file(&path) {
-                    Ok(_) => println!(
-                        "[INFO] Removing file {:?} because the video file does not contain the header",
-                        path.file_name()
-                    ),
-                    Err(ef) => println!(
-                        "[ERROR] video associated to file {:?} does not contain the header, but the file could not be deleted: {ef:?}",
-                        path.file_name()
-                    ),
-                }
-                continue;
-            }
-            db.push(video);
-        }
-    }
+    Ok(())
 }
 
 /// Writes a video to a file
-pub fn write_video(buffer: &mut impl Write, video: &YoutubeMusicVideoRef) {
-    write_str(buffer, &video.title);
-    write_str(buffer, &video.author);
-    write_str(buffer, &video.album);
-    write_str(buffer, &video.video_id);
-    write_str(buffer, &video.duration);
+pub fn write_video(buffer: &mut impl Write, video: &YoutubeMusicVideoRef) -> std::io::Result<()> {
+    write_str(buffer, &video.title)?;
+    write_str(buffer, &video.author)?;
+    write_str(buffer, &video.album)?;
+    write_str(buffer, &video.video_id)?;
+    write_str(buffer, &video.duration)?;
+    Ok(())
 }
 
 /// Writes a string from the cursor
-fn write_str(cursor: &mut impl Write, value: &str) {
-    write_u32(cursor, value.len() as u32);
-    let _ = cursor.write_all(value.as_bytes());
+fn write_str(cursor: &mut impl Write, value: &str) -> std::io::Result<()> {
+    cursor.write_varint(value.len() as u32)?;
+    cursor.write_all(value.as_bytes())?;
+    Ok(())
 }
 
-/// Writes a u32 from the cursor
-fn write_u32(cursor: &mut impl Write, value: u32) {
-    let _ = cursor.write_varint(value);
+/// Synchronous write for internal use (sync wrapper)
+pub fn write_sync(db: &YTLocalDatabase) {
+    let references = db.references.clone();
+    let _ = write_sync_with_db(&db.cache_dir, &references);
+}
+
+/// Fixes the database by reading from the binary file and rewriting it
+pub fn fix_db_sync(db: &YTLocalDatabase) {
+    let mut database = match db.references.write() {
+        Ok(d) => d,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    database.clear();
+    fix_db_populate(&db.cache_dir, &mut database);
+}
+
+/// Populates database from binary file
+pub fn fix_db_populate(cache_dir: &std::path::Path, database: &mut Vec<YoutubeMusicVideoRef>) {
+    let _ = std::fs::read(cache_dir.join("db.bin")).map(|bytes| {
+        let mut buffer = std::io::Cursor::new(bytes);
+        while buffer.get_mut().len() > buffer.position() as usize {
+            if let Some(video) = read_video(&mut buffer) {
+                database.push(video);
+            }
+        }
+    });
+}
+
+/// Reads a video from the cursor (for fix_db)
+fn read_video(buffer: &mut std::io::Cursor<Vec<u8>>) -> Option<YoutubeMusicVideoRef> {
+    Some(YoutubeMusicVideoRef {
+        title: read_str(buffer)?,
+        author: read_str(buffer)?,
+        album: read_str(buffer)?,
+        video_id: read_str(buffer)?,
+        duration: read_str(buffer)?,
+    })
+}
+
+/// Reads a string from the cursor
+fn read_str(cursor: &mut std::io::Cursor<Vec<u8>>) -> Option<String> {
+    let mut buf = vec![0u8; ReadVarint::<u32>::read_varint(cursor).ok()? as usize];
+    cursor.read_exact(&mut buf).ok()?;
+    String::from_utf8(buf).ok()
 }
