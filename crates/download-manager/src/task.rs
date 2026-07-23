@@ -1,6 +1,6 @@
 use std::process::Stdio;
 
-use log::{debug, error};
+use log::{info, error};
 use tokio::process::Command;
 use ytpapi2::YoutubeMusicVideoRef;
 
@@ -47,7 +47,7 @@ async fn download_with_ytdlp(
     output_path: &std::path::Path,
     sender: &MessageHandler,
 ) -> Result<(), DownloadError> {
-    debug!("Starting yt-dlp download for video: {}", video_id);
+    info!("Starting yt-dlp download for: {}", video_id);
     sender(DownloadManagerMessage::VideoStatusUpdate(
         video_id.to_string(),
         MusicDownloadStatus::Downloading(0),
@@ -75,11 +75,11 @@ async fn download_with_ytdlp(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        debug!("yt-dlp failed for {}: {}", video_id, stderr);
+        info!("yt-dlp failed for {}: {}", video_id, stderr);
         return Err(DownloadError::YtDlpFailed(stderr));
     }
 
-    debug!("yt-dlp download completed for: {}", video_id);
+    info!("yt-dlp download completed for: {}", video_id);
     sender(DownloadManagerMessage::VideoStatusUpdate(
         video_id.to_string(),
         MusicDownloadStatus::Downloading(100),
@@ -179,6 +179,7 @@ impl DownloadManager {
             }
             downloads.insert(song.video_id.clone());
         }
+        info!("Starting download: {}", song.video_id);
         s(DownloadManagerMessage::VideoStatusUpdate(
             song.video_id.clone(),
             MusicDownloadStatus::Downloading(1),
@@ -204,7 +205,7 @@ impl DownloadManager {
         }
 match self.handle_download(&song.video_id, s.clone()).await {
             Ok(_) => {
-                debug!("Download completed for: {}", song.video_id);
+                info!("Download completed: {}", song.video_id);
                 let json_path = download_path_json.clone();
                 let song_clone = song.clone();
                 let json = serde_json::to_string(&song_clone).unwrap_or_default();
@@ -222,7 +223,7 @@ match self.handle_download(&song.video_id, s.clone()).await {
                 true
             }
             Err(e) => {
-                debug!("Download failed for {}: {:?}", song.video_id, e);
+                info!("Download failed for {}: {:?}", song.video_id, e);
                 if download_path_mp4.exists() {
                     let mp4_path = download_path_mp4.clone();
                     let _ = spawn_blocking(move || {

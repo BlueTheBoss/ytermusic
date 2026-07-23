@@ -177,7 +177,7 @@ impl PlayerState {
             }
 
             if self.is_current_downloaded() {
-                trace!("Current song is downloaded, attempting playback");
+                info!("Playing: {}", self.current().map(|v| &v.title).unwrap_or(&"Unknown".to_string()));
                 if let Some(video) = self.current().cloned() {
                     let k = CACHE_DIR.join(format!("downloads/{}.mp4", video.video_id));
                     trace!("Attempting to play: {:?}", k);
@@ -221,6 +221,9 @@ impl PlayerState {
             .cloned()
             .collect::<VecDeque<_>>();
         trace!("Queuing {} songs for download", to_download.len());
+        if !to_download.is_empty() {
+            info!("Queued {} songs for download", to_download.len());
+        }
         let new_ids: Vec<String> = to_download.iter().map(|v| v.video_id.clone()).collect();
         if new_ids != self.last_download_list {
             self.last_download_list = new_ids;

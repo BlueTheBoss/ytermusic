@@ -1,7 +1,7 @@
 use common_structs::MusicDownloadStatus;
 use download_manager::{DownloadManagerMessage, MessageHandler};
 use flume::Sender;
-use log::{error, trace};
+use log::{error, info, trace};
 use std::{fs, sync::Arc, time::Duration};
 use ytpapi2::YoutubeMusicVideoRef;
 
@@ -96,6 +96,7 @@ impl SoundAction {
                 player.set_relative_current(a as _);
             }
             Self::VideoStatusUpdate(video, status) => {
+                info!("Video status update: {} -> {:?}", video, status);
                 player.music_status.insert(video, status);
             }
             Self::AddVideosToQueue(video) => {
