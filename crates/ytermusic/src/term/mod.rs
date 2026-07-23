@@ -72,6 +72,7 @@ pub enum ManagerMessage {
     LoginSuccess,
     LoginError(String),
     SetLyrics(Vec<LyricLine>),
+    LyricsFetchFinished(String),
 }
 
 impl ManagerMessage {
@@ -222,6 +223,11 @@ impl Manager {
                 self.music_player.current_lyrics = lyrics.clone();
                 self.lyrics_viewer
                     .handle_global_message(ManagerMessage::SetLyrics(lyrics));
+            }
+            ManagerMessage::LyricsFetchFinished(id) => {
+                if self.music_player.fetching_lyrics_id.as_deref() == Some(&id) {
+                    self.music_player.fetching_lyrics_id = None;
+                }
             }
             e => {
                 return self.handle_manager_message(ManagerMessage::PassTo(

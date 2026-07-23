@@ -41,6 +41,7 @@ pub struct PlayerState {
     pub discord_rpc: DiscordRPC,
     pub scrobbler: Scrobbler,
     last_lyrics_id: Option<String>,
+    pub fetching_lyrics_id: Option<String>,
     last_download_list: Vec<String>,
 }
 
@@ -82,6 +83,7 @@ impl PlayerState {
                 listenbrainz_token: CONFIG.scrobble.listenbrainz_token.clone(),
             }),
             last_lyrics_id: None,
+            fetching_lyrics_id: None,
             last_download_list: Vec::new(),
         }
     }
@@ -203,22 +205,25 @@ impl PlayerState {
 
         let current_video = self.current().cloned();
         if let Some(ref video) = current_video {
-            if self.last_lyrics_id.as_deref() != Some(&video.video_id) {
+            if self.last_lyrics_id.as_deref() != Some(&video.video_id)
+                && self.fetching_lyrics_id.as_deref() != Some(&video.video_id)
+            {
                 self.last_lyrics_id = Some(video.video_id.clone());
+                self.fetching_lyrics_id = Some(video.video_id.clone());
                 let updater = self.updater.clone();
+                let video_id = video.video_id.clone();
                 let author = video.author.clone();
                 let title = video.title.clone();
                 let album = video.album.clone();
                 let duration_str = video.duration.clone();
                 tokio::spawn(async move {
                     let duration = duration_str.parse::<f64>().unwrap_or(0.0);
-                    match lrclib::fetch_lyrics(&author, &title, &album, duration).await {
-                        Ok(lyrics) => {
-                            let _ = updater.send(ManagerMessage::SetLyrics(lyrics));
-                        }
-                        Err(e) => {
-                            info!("Lyrics fetch failed for {}: {e}", title);
-                        }
+                    let result = lrclib::fetch_lyrics(&author, &title, &album, duration).await;
+                    let _ = updater.send(ManagerMessage::LyricsFetchFinished(video_id));
+                    if let Ok(lyrics) = result {
+                        let _ = updater.send(ManagerMessage::SetLyrics(lyrics));
+                    } else if let Err(e) = result {
+                        info!("Lyrics fetch failed for {}: {e}", title);
                     }
                 });
             }

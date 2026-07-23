@@ -1,5 +1,6 @@
 use std::{fs::OpenOptions, io::Write};
 
+use log::error;
 use varuint::WriteVarint;
 use ytpapi2::YoutubeMusicVideoRef;
 
@@ -7,14 +8,23 @@ use crate::YTLocalDatabase;
 
 impl YTLocalDatabase {
     pub fn write(&self) {
-        let db = self.references.read().unwrap();
-        let mut file = OpenOptions::new()
+        let db = match self.references.read() {
+            Ok(db) => db,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let mut file = match OpenOptions::new()
             .write(true)
             .append(false)
             .create(true)
             .truncate(true)
             .open(self.cache_dir.join("db.bin"))
-            .unwrap();
+        {
+            Ok(f) => f,
+            Err(e) => {
+                error!("Failed to open database file for writing: {e}");
+                return;
+            }
+        };
         for video in db.iter() {
             write_video(&mut file, video)
         }
@@ -22,7 +32,10 @@ impl YTLocalDatabase {
 }
 impl YTLocalDatabase {
     pub fn fix_db(&self) {
-        let mut db = self.references.write().unwrap();
+        let mut db = match self.references.write() {
+            Ok(db) => db,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         db.clear();
         let cache_folder = self.cache_dir.join("downloads");
         if !cache_folder.is_dir() {
@@ -32,8 +45,14 @@ impl YTLocalDatabase {
             );
             return;
         }
-        for entry in std::fs::read_dir(&cache_folder).unwrap() {
-            let entry = entry.unwrap();
+        let read_dir = match std::fs::read_dir(&cache_folder) {
+            Ok(d) => d,
+            Err(e) => {
+                println!("[ERROR] Failed to read cache directory: {e:?}");
+                return;
+            }
+        };
+        for entry in read_dir.flatten() {
             let path = entry.path();
             // Check if the file is a json file (+ sloppy check if there is any files or directory)
             if path.extension().unwrap_or_default() != "json" {
@@ -138,10 +157,10 @@ pub fn write_video(buffer: &mut impl Write, video: &YoutubeMusicVideoRef) {
 /// Writes a string from the cursor
 fn write_str(cursor: &mut impl Write, value: &str) {
     write_u32(cursor, value.len() as u32);
-    cursor.write_all(value.as_bytes()).unwrap();
+    let _ = cursor.write_all(value.as_bytes());
 }
 
 /// Writes a u32 from the cursor
 fn write_u32(cursor: &mut impl Write, value: u32) {
-    cursor.write_varint(value).unwrap();
+    let _ = cursor.write_varint(value);
 }

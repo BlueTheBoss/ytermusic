@@ -133,10 +133,10 @@ fn connect(mpris: &mut MediaControls, sender: Sender<SoundAction>) -> Result<(),
             sender.send(SoundAction::SeekTo(a.0)).unwrap();
         }
         MediaControlEvent::OpenUri(a) => {
-            todo!("Implement URI opening {a:?}")
+            log::warn!("Unhandled MPRIS OpenUri: {a:?}");
         }
         MediaControlEvent::Raise => {
-            todo!("Implement raise")
+            log::warn!("Unhandled MPRIS Raise");
         }
         MediaControlEvent::Quit => {
             shutdown();

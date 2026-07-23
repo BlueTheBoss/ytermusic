@@ -20,23 +20,40 @@ impl YTLocalDatabase {
     }
 
     pub fn clone_from(&self, videos: &Vec<YoutubeMusicVideoRef>) {
-        self.references.write().unwrap().clone_from(videos);
+        let mut db = match self.references.write() {
+            Ok(db) => db,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        db.clone_from(videos);
     }
 
     pub fn remove_video(&self, video: &YoutubeMusicVideoRef) {
-        let mut database = self.references.write().unwrap();
+        let mut database = match self.references.write() {
+            Ok(db) => db,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         database.retain(|v| v.video_id != video.video_id);
         drop(database);
         self.write();
     }
 
     pub fn append(&self, video: YoutubeMusicVideoRef) {
-        let mut file = OpenOptions::new()
+        let mut file = match OpenOptions::new()
             .append(true)
             .create(true)
             .open(self.cache_dir.join("db.bin"))
-            .unwrap();
+        {
+            Ok(f) => f,
+            Err(e) => {
+                log::error!("Failed to open database for append: {e}");
+                return;
+            }
+        };
         write_video(&mut file, &video);
-        self.references.write().unwrap().push(video);
+        let mut db = match self.references.write() {
+            Ok(db) => db,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        db.push(video);
     }
 }
