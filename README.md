@@ -30,6 +30,10 @@ YTerMusic is a TUI based Youtube Music Player that aims to be as fast and simple
 - **Synced lyrics** (fetched from LrcLib, auto-scrolls with playback)
 - **Discord Rich Presence** (shows current song)
 - **Last.fm / ListenBrainz scrobbling** (automatic with 50%/4min threshold)
+- **Desktop notifications** on track change
+- **Repeat modes** (repeat one, repeat all)
+- **Queue view** (view, reorder, and remove upcoming songs)
+- **Configurable keybindings** (customize all shortcuts in `config.toml`)
 - Custom theming (You can use hex! #05313d = ![05313d](./assets/hex/05313d.png "#05313d") )
 
 ## Install
@@ -80,7 +84,11 @@ cargo build --release
 No browser or cookie setup needed. On first launch you can:
 - **Use anonymously** — works immediately, no account required
 - **Log in with OAuth** — press `L` in the playlist or player screen, follow the device code URL
-- **Configure integrations** — create `~/.config/ytermusic/config.toml`:
+
+### Configuration
+
+Create `~/.config/ytermusic/config.toml` to customize:
+
 ```toml
 [discord]
 client_id = "your_discord_app_id"
@@ -89,7 +97,30 @@ client_id = "your_discord_app_id"
 lastfm_api_key = "..."
 lastfm_session = "..."
 listenbrainz_token = "..."
+
+[keybinds]
+play_pause = " "
+search = "f"
+shuffle = "s"
+remove = "r"
+queue_view = "Q"
+lyrics = "y"
+login = "L"
+repeat_mode = "m"
+forward = "l"
+backward = "h"
+volume_up = "+"
+volume_down = "-"
+scroll_up = "k"
+scroll_down = "j"
+enter = "enter"
+escape = "esc"
+cleanup = "C"
+next = ">"
+previous = "<"
 ```
+
+All keybindings have sensible defaults — only include the ones you want to override.
 
 ## Usage
 
@@ -100,6 +131,8 @@ listenbrainz_token = "..."
 - Press <kbd>s</kbd> to shuffle
 - Press <kbd>r</kbd> to remove a music from the main playlist
 - Press <kbd>y</kbd> to open synced lyrics view
+- Press <kbd>Q</kbd> to view and reorder the upcoming queue
+- Press <kbd>m</kbd> to cycle repeat modes (none → repeat one → repeat all)
 - Press <kbd>L</kbd> to log in with OAuth
 - Press <kbd>Arrow Right</kbd> or <kbd>&gt;</kbd> to skip 5 seconds
 - Press <kbd>Arrow Left</kbd> or <kbd>&lt;</kbd> to go back 5 seconds
