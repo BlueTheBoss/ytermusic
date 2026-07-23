@@ -172,6 +172,56 @@ impl Default for DiscordConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[non_exhaustive]
+pub struct Keybinds {
+    pub play_pause: String,
+    pub next: String,
+    pub previous: String,
+    pub forward: String,
+    pub backward: String,
+    pub volume_up: String,
+    pub volume_down: String,
+    pub search: String,
+    pub shuffle: String,
+    pub remove: String,
+    pub queue_view: String,
+    pub lyrics: String,
+    pub login: String,
+    pub cleanup: String,
+    pub scroll_up: String,
+    pub scroll_down: String,
+    pub enter: String,
+    pub escape: String,
+    pub repeat_mode: String,
+}
+
+impl Default for Keybinds {
+    fn default() -> Self {
+        Self {
+            play_pause: " ".to_string(),
+            next: ">".to_string(),
+            previous: "<".to_string(),
+            forward: "l".to_string(),
+            backward: "h".to_string(),
+            volume_up: "+".to_string(),
+            volume_down: "-".to_string(),
+            search: "f".to_string(),
+            shuffle: "s".to_string(),
+            remove: "r".to_string(),
+            queue_view: "Q".to_string(),
+            lyrics: "y".to_string(),
+            login: "L".to_string(),
+            cleanup: "C".to_string(),
+            scroll_up: "k".to_string(),
+            scroll_down: "j".to_string(),
+            enter: "enter".to_string(),
+            escape: "esc".to_string(),
+            repeat_mode: "m".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[non_exhaustive]
 pub struct ScrobbleConfig {
     #[serde(default)]
     pub lastfm_api_key: String,
@@ -210,6 +260,8 @@ pub struct Config {
     pub discord: DiscordConfig,
     #[serde(default)]
     pub scrobble: ScrobbleConfig,
+    #[serde(default)]
+    pub keybinds: Keybinds,
 }
 
 impl Config {

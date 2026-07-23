@@ -91,87 +91,101 @@ impl Screen for PlayerState {
     }
 
     fn on_key_press(&mut self, key: KeyEvent, _: &ratatui::layout::Rect) -> EventResponse {
-        match key.code {
-            KeyCode::Esc => ManagerMessage::ChangeState(self.goto).event(),
-            KeyCode::F(5) => {
-                // Get all musics that have failled to download
-                let mut musics = Vec::new();
-                self.music_status
-                    .iter_mut()
-                    .for_each(|(key, music_status)| {
-                        if MusicDownloadStatus::DownloadFailed != *music_status {
-                            return;
-                        }
-                        if let Some(e) = self.list.iter().find(|x| &x.video_id == key) {
-                            musics.push(e.clone());
-                            *music_status = MusicDownloadStatus::NotDownloaded;
-                        }
-                    });
-                // Download them
-                DOWNLOAD_MANAGER.add_to_download_list(musics);
-                EventResponse::None
-            }
-            KeyCode::Char('f') => ManagerMessage::SearchFrom(Screens::MusicPlayer).event(),
-            KeyCode::Char('L') => ManagerMessage::LoginFrom(Screens::MusicPlayer).event(),
-            KeyCode::Char('y') => ManagerMessage::LyricsFrom(Screens::MusicPlayer).event(),
-            KeyCode::Char('s') => {
-                self.list.shuffle(&mut rand::thread_rng());
-                self.current = 0;
-                self.sink.stop();
-                EventResponse::None
-            }
-            KeyCode::Char('C') => {
-                SoundAction::Cleanup.apply_sound_action(self);
-                EventResponse::None
-            }
-            KeyCode::Char(' ') => {
-                SoundAction::PlayPause.apply_sound_action(self);
-                EventResponse::None
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.list_selector.scroll_up();
-                EventResponse::None
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.list_selector.scroll_down();
-                EventResponse::None
-            }
-            KeyCode::Enter => {
-                if let Some(e) = self.list_selector.play() {
-                    self.activate(e);
-                }
-                EventResponse::None
-            }
-            KeyCode::Char('+') | KeyCode::Char('=') => {
-                SoundAction::Plus.apply_sound_action(self);
-                EventResponse::None
-            }
-            KeyCode::Char('-') => {
-                SoundAction::Minus.apply_sound_action(self);
-                EventResponse::None
-            }
-            KeyCode::Char('<') | KeyCode::Left | KeyCode::Char('h') => {
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    SoundAction::Previous(1).apply_sound_action(self);
-                } else {
-                    SoundAction::Backward.apply_sound_action(self);
-                }
-                EventResponse::None
-            }
-            KeyCode::Char('>') | KeyCode::Right | KeyCode::Char('l') => {
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    SoundAction::Next(1).apply_sound_action(self);
-                } else {
-                    SoundAction::Forward.apply_sound_action(self);
-                }
-                EventResponse::None
-            }
-            KeyCode::Char('r') => {
-                SoundAction::DeleteVideoUnary.apply_sound_action(self);
-                EventResponse::None
-            }
-            _ => EventResponse::None,
+        let k = &key;
+        if key.code == KeyCode::F(5) {
+            let mut musics = Vec::new();
+            self.music_status
+                .iter_mut()
+                .for_each(|(key, music_status)| {
+                    if MusicDownloadStatus::DownloadFailed != *music_status {
+                        return;
+                    }
+                    if let Some(e) = self.list.iter().find(|x| &x.video_id == key) {
+                        musics.push(e.clone());
+                        *music_status = MusicDownloadStatus::NotDownloaded;
+                    }
+                });
+            DOWNLOAD_MANAGER.add_to_download_list(musics);
+            return EventResponse::None;
         }
+
+        let b = &CONFIG.keybinds;
+        if super::key_matches(k, &b.search) {
+            return ManagerMessage::SearchFrom(Screens::MusicPlayer).event();
+        }
+        if super::key_matches(k, &b.login) {
+            return ManagerMessage::LoginFrom(Screens::MusicPlayer).event();
+        }
+        if super::key_matches(k, &b.lyrics) {
+            return ManagerMessage::LyricsFrom(Screens::MusicPlayer).event();
+        }
+        if super::key_matches(k, &b.queue_view) {
+            return ManagerMessage::QueueFrom(Screens::MusicPlayer).event();
+        }
+        if super::key_matches(k, &b.repeat_mode) {
+            SoundAction::ToggleRepeatMode.apply_sound_action(self);
+            return EventResponse::None;
+        }
+        if super::key_matches(k, &b.shuffle) {
+            self.list.shuffle(&mut rand::thread_rng());
+            self.current = 0;
+            self.sink.stop();
+            return EventResponse::None;
+        }
+        if super::key_matches(k, &b.cleanup) {
+            SoundAction::Cleanup.apply_sound_action(self);
+            return EventResponse::None;
+        }
+        if super::key_matches(k, &b.play_pause) {
+            SoundAction::PlayPause.apply_sound_action(self);
+            return EventResponse::None;
+        }
+        if super::key_matches(k, &b.escape) {
+            return ManagerMessage::ChangeState(self.goto).event();
+        }
+        if super::key_matches(k, &b.scroll_up) || super::key_matches(k, "up") {
+            self.list_selector.scroll_up();
+            return EventResponse::None;
+        }
+        if super::key_matches(k, &b.scroll_down) || super::key_matches(k, "down") {
+            self.list_selector.scroll_down();
+            return EventResponse::None;
+        }
+        if super::key_matches(k, &b.enter) {
+            if let Some(e) = self.list_selector.play() {
+                self.activate(e);
+            }
+            return EventResponse::None;
+        }
+        if super::key_matches(k, &b.volume_up) || super::key_matches(k, "=") {
+            SoundAction::Plus.apply_sound_action(self);
+            return EventResponse::None;
+        }
+        if super::key_matches(k, &b.volume_down) {
+            SoundAction::Minus.apply_sound_action(self);
+            return EventResponse::None;
+        }
+        if super::key_matches(k, &b.remove) {
+            SoundAction::DeleteVideoUnary.apply_sound_action(self);
+            return EventResponse::None;
+        }
+        if super::key_matches(k, &b.forward) || super::key_matches(k, "right") {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                SoundAction::Next(1).apply_sound_action(self);
+            } else {
+                SoundAction::Forward.apply_sound_action(self);
+            }
+            return EventResponse::None;
+        }
+        if super::key_matches(k, &b.backward) || super::key_matches(k, "left") {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                SoundAction::Previous(1).apply_sound_action(self);
+            } else {
+                SoundAction::Backward.apply_sound_action(self);
+            }
+            return EventResponse::None;
+        }
+        EventResponse::None
     }
 
     fn render(&mut self, f: &mut ratatui::Frame) {
@@ -203,7 +217,14 @@ impl Screen for PlayerState {
                     Block::default()
                         .title(
                             self.current()
-                                .map(|x| format!(" {} ", to_bidi_string(&x.to_string())))
+                                .map(|x| {
+                                    let repeat = match self.repeat_mode {
+                                        crate::structures::sound_action::RepeatMode::None => "",
+                                        crate::structures::sound_action::RepeatMode::One => " [R1]",
+                                        crate::structures::sound_action::RepeatMode::All => " [RA]",
+                                    };
+                                    format!(" {}{} ", to_bidi_string(&x.to_string()), repeat)
+                                })
                                 .unwrap_or_else(|| " No music playing ".to_owned()),
                         )
                         .borders(Borders::ALL),
@@ -267,6 +288,10 @@ impl Screen for PlayerState {
             ManagerMessage::RestartPlayer => {
                 SoundAction::RestartPlayer.apply_sound_action(self);
                 ManagerMessage::ChangeState(Screens::MusicPlayer).event()
+            }
+            ManagerMessage::SoundAction(action) => {
+                action.apply_sound_action(self);
+                EventResponse::None
             }
             _ => EventResponse::None,
         }

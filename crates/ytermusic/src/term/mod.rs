@@ -5,6 +5,7 @@ pub mod login;
 pub mod lyrics_view;
 pub mod music_player;
 pub mod playlist;
+pub mod queue_view;
 pub mod playlist_view;
 pub mod search;
 pub mod vertical_gauge;
@@ -16,8 +17,8 @@ use std::{
 
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEvent, KeyEventKind, KeyModifiers,
-        MouseEvent,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseEvent,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -32,9 +33,27 @@ use crate::{
 
 use crate::lyrics::lrclib::LyricLine;
 
-use self::{device_lost::DeviceLost, item_list::ListItem, login::Login, lyrics_view::LyricsView, playlist::Chooser, search::Search};
+use self::{device_lost::DeviceLost, item_list::ListItem, login::Login, lyrics_view::LyricsView, playlist::Chooser, queue_view::QueueView, search::Search};
 
 use crate::term::playlist_view::PlaylistView;
+
+pub fn key_matches(key: &KeyEvent, bind: &str) -> bool {
+    match bind {
+        "enter" => key.code == KeyCode::Enter,
+        "esc" => key.code == KeyCode::Esc,
+        "space" => key.code == KeyCode::Char(' '),
+        "up" => key.code == KeyCode::Up,
+        "down" => key.code == KeyCode::Down,
+        "left" => key.code == KeyCode::Left,
+        "right" => key.code == KeyCode::Right,
+        "delete" => key.code == KeyCode::Delete,
+        c if c.len() == 1 => {
+            let ch = c.chars().next().unwrap();
+            key.code == KeyCode::Char(ch)
+        }
+        _ => false,
+    }
+}
 
 // A trait to handle the different screens
 pub trait Screen {
@@ -57,6 +76,7 @@ pub enum EventResponse {
 pub enum ManagerMessage {
     Error(String, Box<Option<ManagerMessage>>),
     PassTo(Screens, Box<ManagerMessage>),
+    SoundAction(SoundAction),
     Inspect(String, Screens, Vec<YoutubeMusicVideoRef>),
     ChangeState(Screens),
     SearchFrom(Screens),
@@ -65,6 +85,7 @@ pub enum ManagerMessage {
     PlaylistFrom(Screens),
     LoginFrom(Screens),
     LyricsFrom(Screens),
+    QueueFrom(Screens),
     RestartPlayer,
     Quit,
     AddElementToChooser((String, Vec<YoutubeMusicVideoRef>)),
@@ -95,6 +116,7 @@ pub enum Screens {
     PlaylistViewer = 0x4,
     Login = 0x5,
     LyricsViewer = 0x6,
+    QueueViewer = 0x7,
 }
 
 // The screen manager that handles the different screens
@@ -107,6 +129,7 @@ pub struct Manager {
     playlist_viewer: PlaylistView,
     login: Login,
     lyrics_viewer: LyricsView,
+    queue_viewer: QueueView,
 }
 
 impl Manager {
@@ -129,6 +152,7 @@ impl Manager {
             device_lost: DeviceLost(Vec::new(), None),
             login: Login::new(),
             lyrics_viewer: LyricsView::new(),
+            queue_viewer: QueueView::new(),
         }
     }
     pub fn current_screen(&mut self) -> &mut dyn Screen {
@@ -143,6 +167,7 @@ impl Manager {
             Screens::PlaylistViewer => &mut self.playlist_viewer,
             Screens::Login => &mut self.login,
             Screens::LyricsViewer => &mut self.lyrics_viewer,
+            Screens::QueueViewer => &mut self.queue_viewer,
         }
     }
     pub fn set_current_screen(&mut self, screen: Screens) {
@@ -199,6 +224,19 @@ impl Manager {
                 let lyrics = self.music_player.current_lyrics.clone();
                 self.lyrics_viewer.lyrics = lyrics;
                 self.set_current_screen(Screens::LyricsViewer);
+            }
+            ManagerMessage::QueueFrom(e) => {
+                self.current_screen().close(Screens::QueueViewer);
+                self.queue_viewer.goto = e;
+                self.queue_viewer.items = self
+                    .music_player
+                    .list
+                    .iter()
+                    .skip(self.music_player.current + 1)
+                    .cloned()
+                    .collect();
+                self.queue_viewer.list_selector.list_size = self.queue_viewer.items.len();
+                self.set_current_screen(Screens::QueueViewer);
             }
             ManagerMessage::LoginFrom(e) => {
                 self.current_screen().close(Screens::Login);

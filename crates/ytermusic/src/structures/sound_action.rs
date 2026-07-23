@@ -13,6 +13,23 @@ use crate::{
 };
 
 /// Actions that can be sent to the player from other services
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepeatMode {
+    None,
+    One,
+    All,
+}
+
+impl RepeatMode {
+    pub fn next(&self) -> Self {
+        match self {
+            Self::None => Self::One,
+            Self::One => Self::All,
+            Self::All => Self::None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum SoundAction {
     /// Set the volume of the player to the given value
@@ -33,6 +50,11 @@ pub enum SoundAction {
     DeleteVideoUnary,
     ReplaceQueue(Vec<YoutubeMusicVideoRef>),
     VideoStatusUpdate(String, MusicDownloadStatus),
+    ToggleRepeatMode,
+    /// Remove item at the given position in the future queue (offset from current+1)
+    RemoveQueueIndex(usize),
+    /// Move item at position `from` to position `to` in the future queue
+    MoveQueueItem(usize, usize),
 }
 
 impl SoundAction {
@@ -165,6 +187,23 @@ impl SoundAction {
                     Err(e) => error!("Error deleting MP4 video file: {}", e),
                 }
             }
+            Self::ToggleRepeatMode => {
+                player.repeat_mode = player.repeat_mode.next();
+            }
+            Self::RemoveQueueIndex(offset) => {
+                let idx = player.current + 1 + offset;
+                if idx < player.list.len() {
+                    player.list.remove(idx);
+                }
+            }
+            Self::MoveQueueItem(from_offset, to_offset) => {
+                let from = player.current + 1 + from_offset;
+                let to = player.current + 1 + to_offset;
+                if from < player.list.len() && to < player.list.len() {
+                    let item = player.list.remove(from);
+                    player.list.insert(to, item);
+                }
+            }
             Self::ReplaceQueue(videos) => {
                 player.list.truncate(player.current + 1);
                 DOWNLOAD_MANAGER.clean(
@@ -175,6 +214,24 @@ impl SoundAction {
                 Self::Next(1).apply_sound_action(player);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_repeat_mode_cycle() {
+        assert_eq!(RepeatMode::None.next(), RepeatMode::One);
+        assert_eq!(RepeatMode::One.next(), RepeatMode::All);
+        assert_eq!(RepeatMode::All.next(), RepeatMode::None);
+    }
+
+    #[test]
+    fn test_repeat_mode_equality() {
+        assert_eq!(RepeatMode::None, RepeatMode::None);
+        assert_ne!(RepeatMode::None, RepeatMode::One);
     }
 }
 

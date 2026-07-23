@@ -10,9 +10,12 @@ use player::{PlayError, Player, PlayerOptions};
 
 use ytpapi2::YoutubeMusicVideoRef;
 
+use notify_rust::Notification;
+
 use crate::{
     integrations::{discord_rpc::DiscordRPC, scrobbler::{ScrobbleConfig, Scrobbler}},
     lyrics::lrclib::{self, LyricLine},
+    structures::sound_action::RepeatMode,
 };
 
 use crate::{
@@ -37,9 +40,11 @@ pub struct PlayerState {
     pub soundaction_sender: Sender<SoundAction>,
     pub soundaction_receiver: Receiver<SoundAction>,
     pub stream_error_receiver: Receiver<PlayError>,
+    pub repeat_mode: RepeatMode,
     pub current_lyrics: Vec<LyricLine>,
     pub discord_rpc: DiscordRPC,
     pub scrobbler: Scrobbler,
+    last_notified_id: Option<String>,
     last_lyrics_id: Option<String>,
     pub fetching_lyrics_id: Option<String>,
     last_download_list: Vec<String>,
@@ -74,6 +79,7 @@ impl PlayerState {
             list: Vec::new(),
             current: 0,
             rtcurrent: None,
+            repeat_mode: RepeatMode::None,
             current_lyrics: Vec::new(),
             discord_rpc: DiscordRPC::new(&CONFIG.discord.client_id),
             scrobbler: Scrobbler::new(ScrobbleConfig {
@@ -82,6 +88,7 @@ impl PlayerState {
                 lastfm_session: CONFIG.scrobble.lastfm_session.clone(),
                 listenbrainz_token: CONFIG.scrobble.listenbrainz_token.clone(),
             }),
+            last_notified_id: None,
             last_lyrics_id: None,
             fetching_lyrics_id: None,
             last_download_list: Vec::new(),
@@ -131,7 +138,21 @@ impl PlayerState {
         }
         if self.sink.is_finished() {
             if self.is_current_downloaded() && self.rtcurrent.as_ref() == self.current() {
-                self.set_relative_current(1);
+                match self.repeat_mode {
+                    RepeatMode::One => {
+                        // replay current song without advancing
+                    }
+                    RepeatMode::All => {
+                        if self.current >= self.list.len().saturating_sub(1) {
+                            self.current = 0;
+                        } else {
+                            self.set_relative_current(1);
+                        }
+                    }
+                    RepeatMode::None => {
+                        self.set_relative_current(1);
+                    }
+                }
             }
             self.handle_stream_errors();
             self.update_controls();
@@ -235,6 +256,21 @@ impl PlayerState {
         let duration = video_clone
             .as_ref()
             .and_then(|v| v.duration.parse::<f64>().ok());
+
+        if let Some(ref video) = video_clone {
+            if self.last_notified_id.as_deref() != Some(&video.video_id) {
+                self.last_notified_id = Some(video.video_id.clone());
+                let summary = video.title.clone();
+                let body = format!("{} — {}", video.author, video.album);
+                let _ = Notification::new()
+                    .summary(&summary)
+                    .body(&body)
+                    .appname("YTerMusic")
+                    .show();
+                self.scrobbler.now_playing(video);
+            }
+        }
+
         self.discord_rpc.update(video_clone.as_ref(), is_paused, elapsed);
         self.scrobbler.tick(video_clone.as_ref(), elapsed, duration);
     }
