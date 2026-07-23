@@ -155,6 +155,45 @@ pub struct PlaylistConfig {}
 #[non_exhaustive]
 pub struct SearchConfig {}
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct DiscordConfig {
+    #[serde(default)]
+    pub client_id: String,
+}
+
+impl Default for DiscordConfig {
+    fn default() -> Self {
+        Self {
+            client_id: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ScrobbleConfig {
+    #[serde(default)]
+    pub lastfm_api_key: String,
+    #[serde(default)]
+    pub lastfm_shared_secret: String,
+    #[serde(default)]
+    pub lastfm_session: String,
+    #[serde(default)]
+    pub listenbrainz_token: String,
+}
+
+impl Default for ScrobbleConfig {
+    fn default() -> Self {
+        Self {
+            lastfm_api_key: String::new(),
+            lastfm_shared_secret: String::new(),
+            lastfm_session: String::new(),
+            listenbrainz_token: String::new(),
+        }
+    }
+}
+
 #[allow(unused)]
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -167,6 +206,10 @@ pub struct Config {
     pub playlist: PlaylistConfig,
     #[serde(default)]
     pub search: SearchConfig,
+    #[serde(default)]
+    pub discord: DiscordConfig,
+    #[serde(default)]
+    pub scrobble: ScrobbleConfig,
 }
 
 impl Config {

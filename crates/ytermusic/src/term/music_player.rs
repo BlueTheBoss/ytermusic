@@ -112,6 +112,8 @@ impl Screen for PlayerState {
                 EventResponse::None
             }
             KeyCode::Char('f') => ManagerMessage::SearchFrom(Screens::MusicPlayer).event(),
+            KeyCode::Char('L') => ManagerMessage::LoginFrom(Screens::MusicPlayer).event(),
+            KeyCode::Char('y') => ManagerMessage::LyricsFrom(Screens::MusicPlayer).event(),
             KeyCode::Char('s') => {
                 self.list.shuffle(&mut rand::thread_rng());
                 self.current = 0;

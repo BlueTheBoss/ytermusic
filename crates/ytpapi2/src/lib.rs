@@ -17,6 +17,7 @@ use sha1::{Digest, Sha1};
 use string_utils::StringUtils;
 
 mod json_extractor;
+pub mod oauth;
 mod string_utils;
 
 pub use json_extractor::YoutubeMusicVideoRef;
@@ -24,88 +25,8 @@ pub use json_extractor::YoutubeMusicVideoRef;
 pub type Result<T> = std::result::Result<T, YoutubeMusicError>;
 
 const YTM_DOMAIN: &str = "https://music.youtube.com";
-
-#[cfg(test)]
-fn get_headers() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    let file = std::fs::read_to_string("../headers.txt").unwrap();
-    for header in file.lines() {
-        if header.trim().is_empty() {
-            continue;
-        }
-        let (key, value) = header.split_once(": ").unwrap();
-        headers.insert(
-            match key {
-                "Cookie" => reqwest::header::COOKIE,
-                "User-Agent" => reqwest::header::USER_AGENT,
-                _ => {
-                    println!("Unknown header key: {}", key);
-                    continue;
-                }
-            },
-            value.parse().unwrap(),
-        );
-    }
-    headers
-}
-
-#[cfg(test)]
-fn get_account_id() -> Option<String> {
-    let file = std::fs::read_to_string("../account_id.txt").unwrap();
-    let account_id = match std::fs::read_to_string(file) {
-        Ok(id) => Some(id),
-        Err(_) => None,
-    };
-    return account_id;
-}
-
-#[test]
-fn advanced_like() {
-    use tokio::runtime::Runtime;
-    Runtime::new().unwrap().block_on(async {
-        let ytm = YoutubeMusicInstance::new(get_headers(), get_account_id())
-            .await
-            .unwrap();
-        println!("{}", ytm.compute_sapi_hash());
-        let search = ytm
-            .get_library(&Endpoint::MusicLibraryLanding, 0)
-            .await
-            .unwrap();
-        assert_eq!(search.is_empty(), false);
-        println!("{:?}", search[1]);
-        println!("{:?}", ytm.get_playlist(&search[1], 0).await.unwrap());
-    });
-}
-
-#[test]
-fn advanced_test() {
-    use tokio::runtime::Runtime;
-    Runtime::new().unwrap().block_on(async {
-        let ytm = YoutubeMusicInstance::new(get_headers(), get_account_id())
-            .await
-            .unwrap();
-        let search = ytm.search("j'ai la danse qui va avec", 0).await.unwrap();
-        assert_eq!(search.videos.is_empty(), false);
-        assert_eq!(search.playlists.is_empty(), false);
-        let playlist_contents = ytm.get_playlist(&search.playlists[1], 0).await.unwrap();
-        println!("{:?}", playlist_contents);
-    });
-}
-
-#[test]
-fn home_test() {
-    use tokio::runtime::Runtime;
-    Runtime::new().unwrap().block_on(async {
-        let ytm = YoutubeMusicInstance::new(get_headers(), get_account_id())
-            .await
-            .unwrap();
-        let search = ytm.get_home(0).await.unwrap();
-        println!("{:?}", search.playlists);
-        assert_eq!(search.playlists.is_empty(), false);
-        let playlist_contents = ytm.get_playlist(&search.playlists[0], 0).await.unwrap();
-        println!("{:?}", playlist_contents);
-    });
-}
+const YTM_USER_AGENT: &str =
+    "Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0";
 
 #[derive(Debug, Clone, PartialOrd, Eq, Ord, PartialEq, Hash, Serialize, Deserialize)]
 pub struct YoutubeMusicPlaylistRef {
@@ -114,12 +35,29 @@ pub struct YoutubeMusicPlaylistRef {
     pub browse_id: String,
 }
 
+pub enum AuthMode {
+    Anonymous,
+    Oauth {
+        access_token: String,
+    },
+    Cookie {
+        sapisid: String,
+        cookies: String,
+        account_id: Option<String>,
+    },
+}
+
+pub enum ClientSpec {
+    WebRemix {
+        api_key: String,
+        client_version: String,
+    },
+    TvHtml5,
+}
+
 pub struct YoutubeMusicInstance {
-    sapisid: String,
-    innertube_api_key: String,
-    client_version: String,
-    cookies: String,
-    account_id: Option<String>,
+    auth: AuthMode,
+    spec: ClientSpec,
     client: reqwest::Client,
 }
 
@@ -152,9 +90,7 @@ impl YoutubeMusicInstance {
         if !headers.contains_key(reqwest::header::USER_AGENT) {
             headers.insert(
                 reqwest::header::USER_AGENT,
-                "Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0"
-                    .parse()
-                    .unwrap(),
+                YTM_USER_AGENT.parse().unwrap(),
             );
         }
         let account_path = path
@@ -171,13 +107,16 @@ impl YoutubeMusicInstance {
                 }
                 Some(id)
             }
-            Err(_) => None, //don't care if there is no files or nothing in the file
+            Err(_) => None,
         };
         Self::new(headers, account_id).await
     }
 
-    pub async fn new(headers: HeaderMap, account_id: Option<String>) -> Result<Self> {
-        trace!("Creating new YoutubeMusicInstance");
+    pub async fn new(
+        headers: HeaderMap,
+        account_id: Option<String>,
+    ) -> Result<Self> {
+        trace!("Creating new YoutubeMusicInstance (cookie auth)");
         let rest_client = reqwest::ClientBuilder::default()
             .default_headers(headers.clone())
             .build()
@@ -200,7 +139,7 @@ impl YoutubeMusicInstance {
             error!("Need to login");
             return Err(YoutubeMusicError::NeedToLogin);
         }
-        trace!("Parsing cookies");
+
         let cookies = headers
             .get("Cookie")
             .ok_or(YoutubeMusicError::NoCookieAttribute)?;
@@ -211,36 +150,122 @@ impl YoutubeMusicInstance {
         let sapisid = cookies
             .between("SAPISID=", ";")
             .ok_or_else(|| YoutubeMusicError::NoSapsidInCookie)?;
-        trace!("Cookies parsed! SAPISID: {}", sapisid);
-        let innertube_api_key = response
+        trace!("Cookies parsed! SAPISID: {sapisid}");
+
+        let (api_key, client_version) = Self::scrape_ytcfg(&response)?;
+
+        trace!("account id {account_id:?}");
+        Ok(Self {
+            auth: AuthMode::Cookie {
+                sapisid: sapisid.to_string(),
+                cookies,
+                account_id,
+            },
+            spec: ClientSpec::WebRemix {
+                api_key: api_key.to_string(),
+                client_version: client_version.to_string(),
+            },
+            client: rest_client,
+        })
+    }
+
+    pub async fn new_anonymous() -> Result<Self> {
+        trace!("Creating new YoutubeMusicInstance (anonymous)");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::USER_AGENT,
+            YTM_USER_AGENT.parse().unwrap(),
+        );
+
+        let rest_client = reqwest::ClientBuilder::default()
+            .default_headers(headers.clone())
+            .build()
+            .map_err(YoutubeMusicError::RequestError)?;
+
+        let response: String = rest_client
+            .get(YTM_DOMAIN)
+            .headers(headers)
+            .send()
+            .await
+            .map_err(YoutubeMusicError::RequestError)?
+            .text()
+            .await
+            .map_err(YoutubeMusicError::RequestError)?;
+
+        let (api_key, client_version) = Self::scrape_ytcfg(&response)?;
+
+        Ok(Self {
+            auth: AuthMode::Anonymous,
+            spec: ClientSpec::WebRemix {
+                api_key: api_key.to_string(),
+                client_version: client_version.to_string(),
+            },
+            client: rest_client,
+        })
+    }
+
+    pub async fn new_oauth(access_token: String) -> Result<Self> {
+        trace!("Creating new YoutubeMusicInstance (OAuth)");
+        let client = reqwest::ClientBuilder::default()
+            .build()
+            .map_err(YoutubeMusicError::RequestError)?;
+
+        Ok(Self {
+            auth: AuthMode::Oauth { access_token },
+            spec: ClientSpec::TvHtml5,
+            client,
+        })
+    }
+
+    fn scrape_ytcfg(response: &str) -> Result<(String, String)> {
+        let api_key = response
             .between("INNERTUBE_API_KEY\":\"", "\"")
-            .ok_or_else(|| YoutubeMusicError::CantFindInnerTubeApiKey(response.to_string()))?;
-        trace!("Innertube API key: {}", innertube_api_key);
+            .ok_or_else(|| {
+                YoutubeMusicError::CantFindInnerTubeApiKey(response.to_string())
+            })?;
+        trace!("Innertube API key: {api_key}");
         let client_version = response
             .between("INNERTUBE_CLIENT_VERSION\":\"", "\"")
             .ok_or_else(|| {
                 YoutubeMusicError::CantFindInnerTubeClientVersion(response.to_string())
             })?;
-        trace!("Innertube client version: {}", client_version);
-        // New file for brand accounts, maybe put it in config or headers.txt is better but more complex.
-        trace!("account id {:?}", account_id);
-        Ok(Self {
-            sapisid: sapisid.to_string(),
-            innertube_api_key: innertube_api_key.to_string(),
-            client_version: client_version.to_string(),
-            cookies,
-            account_id,
-            client: rest_client,
-        })
+        trace!("Innertube client version: {client_version}");
+        Ok((api_key.to_string(), client_version.to_string()))
     }
-    fn compute_sapi_hash(&self) -> String {
+
+    fn build_body(&self, endpoint_key: &str, endpoint_param: &str) -> String {
+        let context = match (&self.auth, &self.spec) {
+            (AuthMode::Cookie { account_id: Some(id), .. }, ClientSpec::WebRemix { client_version, .. }) => {
+                format!(
+                    r#"{{"client":{{"clientName":"WEB_REMIX","clientVersion":"{client_version}"}},"user":{{"onBehalfOfUser":"{id}"}}}}"#
+                )
+            }
+            (_, ClientSpec::WebRemix { client_version, .. }) => {
+                format!(
+                    r#"{{"client":{{"clientName":"WEB_REMIX","clientVersion":"{client_version}"}}}}"#
+                )
+            }
+            (_, ClientSpec::TvHtml5) => {
+                r#"{"client":{"clientName":"TVHTML5_SIMPLY_EMBEDDED_PLAYER","clientVersion":"1.0"}}"#.to_string()
+            }
+        };
+        if endpoint_key.is_empty() {
+            format!(r#"{{"context":{context}}}"#)
+        } else {
+            format!(
+                r#"{{"context":{context},"{endpoint_key}":"{endpoint_param}"}}"#
+            )
+        }
+    }
+
+    fn compute_sapi_hash(sapisid: &str) -> String {
         let start = SystemTime::now();
         let since_the_epoch = start
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards");
         let timestamp = since_the_epoch.as_secs();
         let mut hasher = Sha1::new();
-        hasher.update(format!("{timestamp} {} {YTM_DOMAIN}", self.sapisid));
+        hasher.update(format!("{timestamp} {sapisid} {YTM_DOMAIN}"));
         let result = hasher.finalize();
         let mut hex = String::with_capacity(40);
         for byte in result {
@@ -249,6 +274,7 @@ impl YoutubeMusicInstance {
         trace!("Computed SAPI Hash{timestamp}_{hex}");
         format!("{timestamp}_{hex}")
     }
+
     async fn browse_continuation(
         &self,
         continuation: &Continuation,
@@ -260,7 +286,7 @@ impl YoutubeMusicInstance {
         debug!("Browse continuation response: {playlist_json}");
         if playlist_json.get("error").is_some() {
             error!("Error in browse_continuation");
-            error!("{:?}", playlist_json);
+            error!("{playlist_json:?}");
             return Err(YoutubeMusicError::YoutubeMusicError(playlist_json));
         }
         let continuation = if continuations {
@@ -270,6 +296,7 @@ impl YoutubeMusicInstance {
         };
         Ok((playlist_json, continuation))
     }
+
     async fn browse_continuation_raw(
         &self,
         Continuation {
@@ -278,34 +305,23 @@ impl YoutubeMusicInstance {
         }: &Continuation,
     ) -> Result<String> {
         trace!("Browse continuation {continuation}");
-        let url = format!(
-            "https://music.youtube.com/youtubei/v1/browse?ctoken={continuation}&continuation={continuation}&type=next&itct={click_tracking_params}&key={}&prettyPrint=false",
-            self.innertube_api_key
+        let mut url = format!(
+            "https://music.youtube.com/youtubei/v1/browse?ctoken={continuation}&continuation={continuation}&type=next&itct={click_tracking_params}&prettyPrint=false",
         );
-        // let body = format!(
-        //     r#"{{"context":{{"client":{{"clientName":"WEB_REMIX","clientVersion":"{}"}}}}}}"#,
-        //     self.client_version
-        // );
-        let body = match &self.account_id {
-            Some(id) => format!(
-                r#"{{"context":{{"client":{{"clientName":"WEB_REMIX","clientVersion":"{}"}},"user":{{"onBehalfOfUser":"{id}"}}}}}}"#,
-                self.client_version
-            ),
-            None => format!(
-                r#"{{"context":{{"client":{{"clientName":"WEB_REMIX","clientVersion":"{}"}}}}}}"#,
-                self.client_version
-            ),
-        };
-        self.client
+        if let ClientSpec::WebRemix { api_key, .. } = &self.spec {
+            url = format!("{url}&key={api_key}");
+        }
+
+        let body = self.build_body("", "");
+
+        let mut req = self
+            .client
             .post(&url)
-            .header("Content-Type", "application/json")
-            .header(
-                "Authorization",
-                format!("SAPISIDHASH {}", self.compute_sapi_hash()),
-            )
-            .header("X-Origin", "https://music.youtube.com")
-            .header("Cookie", &self.cookies)
-            .body(body)
+            .header("Content-Type", "application/json");
+
+        req = self.apply_auth(req);
+
+        req.body(body)
             .send()
             .await
             .map_err(YoutubeMusicError::RequestError)?
@@ -313,6 +329,27 @@ impl YoutubeMusicInstance {
             .await
             .map_err(YoutubeMusicError::RequestError)
     }
+
+    fn apply_auth(
+        &self,
+        req: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
+        match &self.auth {
+            AuthMode::Cookie {
+                sapisid, cookies, ..
+            } => {
+                let hash = Self::compute_sapi_hash(sapisid);
+                req.header("Authorization", format!("SAPISIDHASH {hash}"))
+                    .header("X-Origin", YTM_DOMAIN)
+                    .header("Cookie", cookies.as_str())
+            }
+            AuthMode::Oauth { access_token } => req
+                .header("Authorization", format!("Bearer {access_token}"))
+                .header("Origin", YTM_DOMAIN),
+            AuthMode::Anonymous => req,
+        }
+    }
+
     async fn browse_raw(
         &self,
         endpoint_route: &str,
@@ -320,30 +357,23 @@ impl YoutubeMusicInstance {
         endpoint_param: &str,
     ) -> Result<String> {
         trace!("Browse {endpoint_route}");
-        let url = format!(
-            "https://music.youtube.com/youtubei/v1/{endpoint_route}?key={}&prettyPrint=false",
-            self.innertube_api_key
+        let mut url = format!(
+            "https://music.youtube.com/youtubei/v1/{endpoint_route}?prettyPrint=false",
         );
-        let body = match &self.account_id {
-            Some(id) => format!(
-                r#"{{"context":{{"client":{{"clientName":"WEB_REMIX","clientVersion":"{}"}},"user":{{"onBehalfOfUser":"{id}"}}}},"{endpoint_key}":"{endpoint_param}"}}"#,
-                self.client_version
-            ),
-            None => format!(
-                r#"{{"context":{{"client":{{"clientName":"WEB_REMIX","clientVersion":"{}"}}}},"{endpoint_key}":"{endpoint_param}"}}"#,
-                self.client_version
-            ),
-        };
-        self.client
+        if let ClientSpec::WebRemix { api_key, .. } = &self.spec {
+            url = format!("{url}&key={api_key}");
+        }
+
+        let body = self.build_body(endpoint_key, endpoint_param);
+
+        let mut req = self
+            .client
             .post(&url)
-            .header("Content-Type", "application/json")
-            .header(
-                "Authorization",
-                format!("SAPISIDHASH {}", self.compute_sapi_hash()),
-            )
-            .header("X-Origin", "https://music.youtube.com")
-            .header("Cookie", &self.cookies)
-            .body(body)
+            .header("Content-Type", "application/json");
+
+        req = self.apply_auth(req);
+
+        req.body(body)
             .send()
             .await
             .map_err(YoutubeMusicError::RequestError)?
@@ -351,6 +381,7 @@ impl YoutubeMusicInstance {
             .await
             .map_err(YoutubeMusicError::RequestError)
     }
+
     async fn browse(
         &self,
         endpoint: &Endpoint,
@@ -369,7 +400,7 @@ impl YoutubeMusicInstance {
         debug!("Browse response: {playlist_json}");
         if playlist_json.get("error").is_some() {
             error!("Error in browse ({endpoint:?})");
-            error!("{:?}", playlist_json);
+            error!("{playlist_json:?}");
             return Err(YoutubeMusicError::YoutubeMusicError(playlist_json));
         }
         let continuation = if continuations {
@@ -379,6 +410,7 @@ impl YoutubeMusicInstance {
         };
         Ok((playlist_json, continuation))
     }
+
     pub async fn get_library(
         &self,
         endpoint: &Endpoint,
@@ -409,6 +441,7 @@ impl YoutubeMusicInstance {
 
         Ok(library)
     }
+
     pub async fn get_playlist(
         &self,
         playlist: &YoutubeMusicPlaylistRef,
@@ -417,6 +450,7 @@ impl YoutubeMusicInstance {
         self.get_playlist_raw(&playlist.browse_id, n_continuations)
             .await
     }
+
     pub async fn get_playlist_raw(
         &self,
         playlist_id: &str,
@@ -454,6 +488,7 @@ impl YoutubeMusicInstance {
 
         Ok(videos)
     }
+
     pub async fn search(
         &self,
         search_query: &str,
@@ -601,4 +636,85 @@ pub enum YoutubeMusicError {
     IoError(std::io::Error),
     YoutubeMusicError(Value),
     InvalidHeaders,
+}
+
+#[cfg(test)]
+fn get_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    let file = std::fs::read_to_string("../headers.txt").unwrap();
+    for header in file.lines() {
+        if header.trim().is_empty() {
+            continue;
+        }
+        let (key, value) = header.split_once(": ").unwrap();
+        headers.insert(
+            match key {
+                "Cookie" => reqwest::header::COOKIE,
+                "User-Agent" => reqwest::header::USER_AGENT,
+                _ => {
+                    println!("Unknown header key: {key}");
+                    continue;
+                }
+            },
+            value.parse().unwrap(),
+        );
+    }
+    headers
+}
+
+#[cfg(test)]
+fn get_account_id() -> Option<String> {
+    let file = std::fs::read_to_string("../account_id.txt").unwrap();
+    let account_id = match std::fs::read_to_string(file.trim()) {
+        Ok(id) => Some(id),
+        Err(_) => None,
+    };
+    account_id
+}
+
+#[test]
+fn advanced_like() {
+    use tokio::runtime::Runtime;
+    Runtime::new().unwrap().block_on(async {
+        let ytm = YoutubeMusicInstance::new(get_headers(), get_account_id())
+            .await
+            .unwrap();
+        let search = ytm
+            .get_library(&Endpoint::MusicLibraryLanding, 0)
+            .await
+            .unwrap();
+        assert_eq!(search.is_empty(), false);
+        println!("{search:?}");
+        println!("{:?}", ytm.get_playlist(&search[1], 0).await.unwrap());
+    });
+}
+
+#[test]
+fn advanced_test() {
+    use tokio::runtime::Runtime;
+    Runtime::new().unwrap().block_on(async {
+        let ytm = YoutubeMusicInstance::new(get_headers(), get_account_id())
+            .await
+            .unwrap();
+        let search = ytm.search("j'ai la danse qui va avec", 0).await.unwrap();
+        assert_eq!(search.videos.is_empty(), false);
+        assert_eq!(search.playlists.is_empty(), false);
+        let playlist_contents = ytm.get_playlist(&search.playlists[1], 0).await.unwrap();
+        println!("{playlist_contents:?}");
+    });
+}
+
+#[test]
+fn home_test() {
+    use tokio::runtime::Runtime;
+    Runtime::new().unwrap().block_on(async {
+        let ytm = YoutubeMusicInstance::new(get_headers(), get_account_id())
+            .await
+            .unwrap();
+        let search = ytm.get_home(0).await.unwrap();
+        println!("{:?}", search.playlists);
+        assert_eq!(search.playlists.is_empty(), false);
+        let playlist_contents = ytm.get_playlist(&search.playlists[0], 0).await.unwrap();
+        println!("{playlist_contents:?}");
+    });
 }

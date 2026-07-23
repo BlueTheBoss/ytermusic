@@ -1,6 +1,8 @@
 pub mod device_lost;
 pub mod item_list;
 pub mod list_selector;
+pub mod login;
+pub mod lyrics_view;
 pub mod music_player;
 pub mod playlist;
 pub mod playlist_view;
@@ -28,7 +30,9 @@ use crate::{
     is_shutdown_sent, shutdown, structures::sound_action::SoundAction, systems::player::PlayerState,
 };
 
-use self::{device_lost::DeviceLost, item_list::ListItem, playlist::Chooser, search::Search};
+use crate::lyrics::lrclib::LyricLine;
+
+use self::{device_lost::DeviceLost, item_list::ListItem, login::Login, lyrics_view::LyricsView, playlist::Chooser, search::Search};
 
 use crate::term::playlist_view::PlaylistView;
 
@@ -59,9 +63,15 @@ pub enum ManagerMessage {
     PlayerFrom(Screens),
     #[allow(dead_code)]
     PlaylistFrom(Screens),
+    LoginFrom(Screens),
+    LyricsFrom(Screens),
     RestartPlayer,
     Quit,
     AddElementToChooser((String, Vec<YoutubeMusicVideoRef>)),
+    LoginCode(String, String),
+    LoginSuccess,
+    LoginError(String),
+    SetLyrics(Vec<LyricLine>),
 }
 
 impl ManagerMessage {
@@ -82,6 +92,8 @@ pub enum Screens {
     Search = 0x2,
     DeviceLost = 0x3,
     PlaylistViewer = 0x4,
+    Login = 0x5,
+    LyricsViewer = 0x6,
 }
 
 // The screen manager that handles the different screens
@@ -92,6 +104,8 @@ pub struct Manager {
     device_lost: DeviceLost,
     current_screen: Screens,
     playlist_viewer: PlaylistView,
+    login: Login,
+    lyrics_viewer: LyricsView,
 }
 
 impl Manager {
@@ -112,6 +126,8 @@ impl Manager {
             search: Search::new(action_sender).await,
             current_screen: Screens::Playlist,
             device_lost: DeviceLost(Vec::new(), None),
+            login: Login::new(),
+            lyrics_viewer: LyricsView::new(),
         }
     }
     pub fn current_screen(&mut self) -> &mut dyn Screen {
@@ -124,6 +140,8 @@ impl Manager {
             Screens::Search => &mut self.search,
             Screens::DeviceLost => &mut self.device_lost,
             Screens::PlaylistViewer => &mut self.playlist_viewer,
+            Screens::Login => &mut self.login,
+            Screens::LyricsViewer => &mut self.lyrics_viewer,
         }
     }
     pub fn set_current_screen(&mut self, screen: Screens) {
@@ -174,6 +192,37 @@ impl Manager {
                 self.chooser.goto = e;
                 self.set_current_screen(Screens::Playlist);
             }
+            ManagerMessage::LyricsFrom(e) => {
+                self.current_screen().close(Screens::LyricsViewer);
+                self.lyrics_viewer.goto = e;
+                let lyrics = self.music_player.current_lyrics.clone();
+                self.lyrics_viewer.lyrics = lyrics;
+                self.set_current_screen(Screens::LyricsViewer);
+            }
+            ManagerMessage::LoginFrom(e) => {
+                self.current_screen().close(Screens::Login);
+                self.login.set_goto(e);
+                self.set_current_screen(Screens::Login);
+            }
+            ManagerMessage::LoginSuccess => {
+                self.login
+                    .handle_global_message(ManagerMessage::LoginSuccess);
+                let goto = self.login.goto();
+                self.set_current_screen(goto);
+            }
+            ManagerMessage::LoginCode(url, code) => {
+                self.login
+                    .handle_global_message(ManagerMessage::LoginCode(url, code));
+            }
+            ManagerMessage::LoginError(msg) => {
+                self.login
+                    .handle_global_message(ManagerMessage::LoginError(msg));
+            }
+            ManagerMessage::SetLyrics(lyrics) => {
+                self.music_player.current_lyrics = lyrics.clone();
+                self.lyrics_viewer
+                    .handle_global_message(ManagerMessage::SetLyrics(lyrics));
+            }
             e => {
                 return self.handle_manager_message(ManagerMessage::PassTo(
                     Screens::DeviceLost,
@@ -214,6 +263,7 @@ impl Manager {
             let rectsize = terminal.size()?;
             terminal.draw(|f| {
                 self.music_player.update();
+                self.lyrics_viewer.current_elapsed = self.music_player.sink.elapsed().as_secs_f64();
                 self.current_screen().render(f);
             })?;
 

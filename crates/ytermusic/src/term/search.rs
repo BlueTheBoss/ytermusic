@@ -10,19 +10,15 @@ use ratatui::{
     Frame,
 };
 use tokio::task::JoinHandle;
-use ytpapi2::{
-    HeaderMap, HeaderValue, SearchResults, YoutubeMusicInstance, YoutubeMusicPlaylistRef,
-    YoutubeMusicVideoRef,
-};
+use ytpapi2::{SearchResults, YoutubeMusicInstance, YoutubeMusicPlaylistRef, YoutubeMusicVideoRef};
 
 use crate::{
     consts::CONFIG,
-    get_header_file, run_service,
+    run_service,
     structures::sound_action::{download_manager_handler, SoundAction},
     systems::DOWNLOAD_MANAGER,
-    try_get_cookies,
     utils::{invert, to_bidi_string},
-    ShutdownSignal, DATABASE,
+    ShutdownSignal, AUTH_TOKEN, DATABASE,
 };
 
 use super::{
@@ -128,7 +124,6 @@ impl Screen for Search {
             let text = self.text.clone();
             let items = self.list.clone();
             self.search_handle = Some(run_service(async move {
-                // Sleep to prevent spamming the api
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 let mut item = Vec::new();
                 match api
@@ -193,6 +188,12 @@ impl Screen for Search {
 
     fn render(&mut self, frame: &mut Frame) {
         let splitted = split_y_start(frame.size(), 3);
+        let has_api = self.api.is_some();
+        let search_label = if has_api {
+            " Search "
+        } else {
+            " Search (offline — only local musics) "
+        };
         frame.render_widget(
             Paragraph::new(self.text.clone())
                 .style(CONFIG.player.text_searching_style)
@@ -201,12 +202,11 @@ impl Screen for Search {
                     Block::default()
                         .borders(Borders::ALL)
                         .style(CONFIG.player.text_next_style)
-                        .title(" Search ")
+                        .title(search_label)
                         .border_type(BorderType::Plain),
                 ),
             splitted[0],
         );
-        //  Select the playlist to play
         let items = self.list.read().unwrap();
         frame.render_widget(&*items, splitted[1]);
     }
@@ -225,6 +225,7 @@ impl Screen for Search {
 }
 impl Search {
     pub async fn new(action_sender: Sender<SoundAction>) -> Self {
+        let api = create_search_api().await;
         Self {
             text: String::new(),
             list: Arc::new(RwLock::new(ListItem::new(
@@ -232,22 +233,7 @@ impl Search {
             ))),
             goto: Screens::MusicPlayer,
             search_handle: None,
-            api: if let Some(cookies) = try_get_cookies() {
-                let mut headermap = HeaderMap::new();
-                headermap.insert(
-                    "cookie",
-                    HeaderValue::from_str(&cookies).unwrap(),
-                );
-                headermap.insert(
-                    "user-agent",
-                    HeaderValue::from_static("Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"),
-                );
-                YoutubeMusicInstance::new(headermap, None).await    //don't think we need a brand account for search
-            } else {
-                YoutubeMusicInstance::from_header_file(get_header_file().unwrap().1.as_path()).await
-            }
-                .ok()
-                .map(Arc::new),
+            api,
             action_sender,
         }
     }
@@ -272,6 +258,30 @@ impl Search {
             Status::PlayList(e, v) => ManagerMessage::Inspect(e.name, Screens::Search, v)
                 .pass_to(Screens::PlaylistViewer)
                 .event(),
+        }
+    }
+}
+
+async fn create_search_api() -> Option<Arc<YoutubeMusicInstance>> {
+    if let Some(token) = AUTH_TOKEN.read().unwrap().as_ref() {
+        if !token.access_token.is_empty() {
+            match YoutubeMusicInstance::new_oauth(token.access_token.clone()).await {
+                Ok(api) => {
+                    log::info!("Search using OAuth API");
+                    return Some(Arc::new(api));
+                }
+                Err(e) => error!("Failed to create search OAuth API: {e:?}"),
+            }
+        }
+    }
+    match YoutubeMusicInstance::new_anonymous().await {
+        Ok(api) => {
+            log::info!("Search using anonymous API");
+            Some(Arc::new(api))
+        }
+        Err(e) => {
+            error!("Failed to create search anonymous API: {e:?}");
+            None
         }
     }
 }

@@ -5,10 +5,15 @@ use std::{
 
 use common_structs::MusicDownloadStatus;
 use flume::{unbounded, Receiver, Sender};
-use log::error;
+use log::{error, info};
 use player::{PlayError, Player, PlayerOptions};
 
 use ytpapi2::YoutubeMusicVideoRef;
+
+use crate::{
+    integrations::{discord_rpc::DiscordRPC, scrobbler::{ScrobbleConfig, Scrobbler}},
+    lyrics::lrclib::{self, LyricLine},
+};
 
 use crate::{
     consts::{CACHE_DIR, CONFIG},
@@ -32,6 +37,10 @@ pub struct PlayerState {
     pub soundaction_sender: Sender<SoundAction>,
     pub soundaction_receiver: Receiver<SoundAction>,
     pub stream_error_receiver: Receiver<PlayError>,
+    pub current_lyrics: Vec<LyricLine>,
+    pub discord_rpc: DiscordRPC,
+    pub scrobbler: Scrobbler,
+    last_lyrics_id: Option<String>,
     last_download_list: Vec<String>,
 }
 
@@ -64,6 +73,15 @@ impl PlayerState {
             list: Vec::new(),
             current: 0,
             rtcurrent: None,
+            current_lyrics: Vec::new(),
+            discord_rpc: DiscordRPC::new(&CONFIG.discord.client_id),
+            scrobbler: Scrobbler::new(ScrobbleConfig {
+                lastfm_api_key: CONFIG.scrobble.lastfm_api_key.clone(),
+                lastfm_shared_secret: CONFIG.scrobble.lastfm_shared_secret.clone(),
+                lastfm_session: CONFIG.scrobble.lastfm_session.clone(),
+                listenbrainz_token: CONFIG.scrobble.listenbrainz_token.clone(),
+            }),
+            last_lyrics_id: None,
             last_download_list: Vec::new(),
         }
     }
@@ -182,6 +200,38 @@ impl PlayerState {
             self.last_download_list = new_ids;
             DOWNLOAD_MANAGER.set_download_list(to_download);
         }
+
+        let current_video = self.current().cloned();
+        if let Some(ref video) = current_video {
+            if self.last_lyrics_id.as_deref() != Some(&video.video_id) {
+                self.last_lyrics_id = Some(video.video_id.clone());
+                let updater = self.updater.clone();
+                let author = video.author.clone();
+                let title = video.title.clone();
+                let album = video.album.clone();
+                let duration_str = video.duration.clone();
+                tokio::spawn(async move {
+                    let duration = duration_str.parse::<f64>().unwrap_or(0.0);
+                    match lrclib::fetch_lyrics(&author, &title, &album, duration).await {
+                        Ok(lyrics) => {
+                            let _ = updater.send(ManagerMessage::SetLyrics(lyrics));
+                        }
+                        Err(e) => {
+                            info!("Lyrics fetch failed for {}: {e}", title);
+                        }
+                    }
+                });
+            }
+        }
+
+        let video_clone = self.current().cloned();
+        let is_paused = self.sink.is_paused();
+        let elapsed = self.sink.elapsed();
+        let duration = video_clone
+            .as_ref()
+            .and_then(|v| v.duration.parse::<f64>().ok());
+        self.discord_rpc.update(video_clone.as_ref(), is_paused, elapsed);
+        self.scrobbler.tick(video_clone.as_ref(), elapsed, duration);
     }
 
     fn handle_stream_errors(&self) {

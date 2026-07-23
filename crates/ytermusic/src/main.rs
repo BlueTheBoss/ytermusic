@@ -3,22 +3,15 @@ use flume::{Receiver, Sender};
 use log::{error, info};
 use once_cell::sync::Lazy;
 use structures::performance::STARTUP_TIME;
-use term::{Manager, ManagerMessage};
+use term::{login, Manager, ManagerMessage};
 use tokio::select;
 
-use std::{
-    future::Future,
-    panic,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::RwLock,
-};
+use std::{future::Future, panic, sync::RwLock};
 use systems::{logger::init, player::player_system};
 
 use crate::{
-    consts::HEADER_TUTORIAL,
     structures::{media::run_window_handler, sound_action::download_manager_handler},
-    systems::{logger::get_log_file_path, DOWNLOAD_MANAGER},
+    systems::DOWNLOAD_MANAGER,
     utils::get_project_dirs,
 };
 
@@ -26,6 +19,8 @@ mod config;
 mod consts;
 mod database;
 mod errors;
+mod integrations;
+mod lyrics;
 mod shutdown;
 mod structures;
 mod systems;
@@ -38,9 +33,11 @@ pub use database::DATABASE;
 
 use mimalloc::MiMalloc;
 
-// Changes the allocator to improve performance especially on Windows
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
+
+static AUTH_TOKEN: Lazy<RwLock<Option<ytpapi2::oauth::OAuthToken>>> =
+    Lazy::new(|| RwLock::new(None));
 
 fn run_service<T>(future: T) -> tokio::task::JoinHandle<()>
 where
@@ -54,26 +51,11 @@ where
     })
 }
 
-static COOKIES: Lazy<RwLock<Option<String>>> = Lazy::new(|| RwLock::new(None));
-
-pub fn try_get_cookies() -> Option<String> {
-    let cookies = COOKIES.read().unwrap();
-    cookies.clone()
-}
-
 fn main() {
-    // Check if the first param is --files
     if let Some(arg) = std::env::args().nth(1) {
         match arg.as_str() {
             "-h" | "--help" => {
                 println!("{}", INTRODUCTION);
-                return;
-            }
-            "--files" => {
-                println!("# Location of ytermusic files");
-                println!(" - Logs: {}", get_log_file_path().display());
-                println!(" - Headers: {}", get_header_file().unwrap().1.display());
-                println!(" - Cache: {}", CACHE_DIR.display());
                 return;
             }
             "--fix-db" => {
@@ -93,123 +75,23 @@ fn main() {
                 }
                 return;
             }
-            "--with-auto-cookies" => {
-                std::fs::write(get_log_file_path(), "# YTerMusic log file\n\n").unwrap();
-                init().expect("Failed to initialize logger");
-                let param = std::env::args().nth(2);
-                if let Some(cookies) = cookies(param) {
-                    let mut cookies_guard = COOKIES.write().unwrap();
-                    info!("Cookies: {cookies}");
-                    *cookies_guard = Some(cookies);
-                    info!("Cookies loaded");
-                } else {
-                    error!("Can't load cookies");
-                    error!("Maybe rookie didn't find any cookies or any browser");
-                    error!("Please make sure you have cookies in your browser");
-                    return;
-                }
-            }
             e => {
                 println!("Unknown argument `{e}`");
                 println!("Here are the available arguments:");
-                println!(" - --files: Show the location of the ytermusic files");
-                println!(" - --clear-cache: Erase all the files in cache");
+                println!(" - --help: Show help");
                 println!(" - --fix-db: Fix the database");
+                println!(" - --clear-cache: Erase all the files in cache");
                 return;
             }
         }
-    } else {
-        std::fs::write(get_log_file_path(), "# YTerMusic log file\n\n").unwrap();
-        init().expect("Failed to initialize logger");
     }
     panic::set_hook(Box::new(|e| {
         println!("{e}");
         error!("{e}");
         shutdown();
     }));
+    init().expect("Failed to initialize logger");
     app_start();
-}
-
-fn cookies(specific_browser: Option<String>) -> Option<String> {
-    let loaded = match specific_browser {
-        Some(browser) => match browser.as_str() {
-            "all" => rookie::load,
-            "firefox" => rookie::firefox,
-            "chrome" => rookie::chrome,
-            "edge" => rookie::edge,
-            "opera" => rookie::opera,
-            "brave" => rookie::brave,
-            "vivaldi" => rookie::vivaldi,
-            "chromium" => rookie::chromium,
-            #[cfg(target_os = "macos")]
-            "safari" => rookie::safari,
-            "arc" => rookie::arc,
-            "librewolf" => rookie::librewolf,
-            "opera-gx" | "opera_gx" => rookie::opera_gx,
-            #[cfg(target_os = "windows")]
-            "internet_explorer" | "internet-explorer" | "ie" => rookie::internet_explorer,
-            #[cfg(target_os = "windows")]
-            "octo_browser" | "octo-browser" => rookie::octo_browser,
-            _ => {
-                println!("Unknown browser `{browser}`");
-                error!("Unknown browser `{browser}`");
-                return None;
-            }
-        },
-        None => rookie::load,
-    }(Some(vec!["youtube.com".to_string()]))
-    .unwrap();
-    let mut cookies = Vec::new();
-    let current_timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    for cookie in loaded {
-        if cookie.domain != ".youtube.com" && cookie.domain != "music.youtube.com" {
-            continue;
-        }
-        if cookie
-            .expires
-            .map(|e| e < current_timestamp)
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        if cookies.iter().any(|(name, _)| name == &cookie.name) {
-            continue;
-        }
-        cookies.push((cookie.name, cookie.value));
-    }
-    let cookies = cookies
-        .iter()
-        .map(|(name, value)| format!("{name}={value}"))
-        .collect::<Vec<_>>();
-    let cookies = cookies.join("; ");
-    Some(cookies)
-}
-
-fn get_header_file() -> Result<(String, PathBuf), (std::io::Error, PathBuf)> {
-    let fp = PathBuf::from_str("headers.txt").unwrap();
-    if let Ok(e) = std::fs::read_to_string(&fp) {
-        return Ok((e, fp));
-    }
-    let fp = get_project_dirs()
-        .ok_or_else(|| {
-            (
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Can't find project dir. This is a `directories` crate issue",
-                ),
-                Path::new("./").to_owned(),
-            )
-        })?
-        .config_dir()
-        .to_owned();
-    if let Err(e) = std::fs::create_dir_all(&fp) {
-        println!("Can't create app directory {e} in `{}`", fp.display());
-    }
-    let fp = fp.join("headers.txt");
-    std::fs::read_to_string(&fp).map_or_else(|e| Err((e, fp.clone())), |e| Ok((e, fp.clone())))
 }
 
 async fn app_start_main(updater_r: Receiver<ManagerMessage>, updater_s: Sender<ManagerMessage>) {
@@ -237,39 +119,64 @@ async fn app_start_main(updater_r: Receiver<ManagerMessage>, updater_s: Sender<M
         }
     }
 
-    if try_get_cookies().is_none() {
-        if let Err((error, filepath)) = get_header_file() {
-            println!("Can't read or find `{}`", filepath.display());
-            println!("Error: {error}");
-            println!("{HEADER_TUTORIAL}");
-            // prevent console window closing on windows, does nothing on linux
-            std::io::stdin().read_line(&mut String::new()).unwrap();
-            return;
-        }
+    try_load_oauth_token().await;
+    let is_authenticated = AUTH_TOKEN.read().unwrap().is_some();
+
+    if is_authenticated {
+        info!("OAuth token loaded, using authenticated mode");
+    } else {
+        info!("No OAuth token found, running in anonymous mode");
     }
 
     STARTUP_TIME.log("Startup");
 
-    // Spawn the clean task
     tasks::clean::spawn_clean_task();
 
     STARTUP_TIME.log("Spawned clean task");
-    // Spawn the player task
     let (sa, player) = player_system(updater_s.clone());
-    // Spawn the downloader system
     DOWNLOAD_MANAGER.spawn_system(ShutdownSignal, download_manager_handler(sa.clone()));
     STARTUP_TIME.log("Spawned system task");
     tasks::last_playlist::spawn_last_playlist_task(updater_s.clone());
     STARTUP_TIME.log("Spawned last playlist task");
-    // Spawn the API task
     tasks::api::spawn_api_task(updater_s.clone());
     STARTUP_TIME.log("Spawned api task");
-    // Spawn the database getter task
     tasks::local_musics::spawn_local_musics_task(updater_s);
 
     STARTUP_TIME.log("Running manager");
     let mut manager = Manager::new(sa, player).await;
     manager.run(&updater_r).unwrap();
+}
+
+async fn try_load_oauth_token() {
+    let token = login::load_token();
+    if let Some(mut token) = token {
+        if token.refresh_token.is_empty() {
+            return;
+        }
+        if token.expires_at <= std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+        {
+            info!("OAuth token expired, refreshing");
+            match ytpapi2::oauth::refresh_access_token(&token.refresh_token).await {
+                Ok(refreshed) => {
+                    token = refreshed;
+                    if let Some(dirs) = get_project_dirs() {
+                        let path = dirs.config_dir().join("oauth.json");
+                        let _ = std::fs::create_dir_all(dirs.config_dir());
+                        let _ = std::fs::write(&path, serde_json::to_string_pretty(&token).unwrap());
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to refresh OAuth token: {e:?}");
+                    return;
+                }
+            }
+        }
+        let mut guard = AUTH_TOKEN.write().unwrap();
+        *guard = Some(token);
+    }
 }
 
 fn app_start() {

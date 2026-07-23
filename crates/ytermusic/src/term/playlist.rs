@@ -112,6 +112,9 @@ impl Screen for Chooser {
         match key.code {
             KeyCode::Esc => return ManagerMessage::ChangeState(Screens::MusicPlayer).event(),
             KeyCode::Char('f') => return ManagerMessage::SearchFrom(Screens::Playlist).event(),
+            KeyCode::Char('L') => {
+                return ManagerMessage::LoginFrom(Screens::Playlist).event()
+            }
             _ => {}
         }
         EventResponse::None
