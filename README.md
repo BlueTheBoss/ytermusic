@@ -34,18 +34,33 @@ YTerMusic is a TUI based Youtube Music Player that aims to be as fast and simple
 
 ## Install
 
-### Arch Linux (from source)
+### Quick install (auto-detect distro)
 ```sh
-sudo pacman -S --needed base-devel git alsa-lib dbus pkg-config
+git clone https://github.com/BlueTheBoss/ytermusic
+cd ytermusic
+./install.sh
+```
+
+### Using Make (any Linux)
+```sh
+git clone https://github.com/BlueTheBoss/ytermusic
+cd ytermusic
+make
+sudo make install
+```
+
+### Arch Linux (manual)
+```sh
+sudo pacman -S --needed base-devel alsa-lib dbus pkg-config cargo
 git clone https://github.com/BlueTheBoss/ytermusic
 cd ytermusic
 cargo build --release
 sudo install -Dm755 target/release/ytermusic /usr/local/bin/ytermusic
 ```
 
-### Other Linux
+### Debian/Ubuntu (manual)
 ```sh
-sudo apt install alsa-tools libasound2-dev libdbus-1-dev pkg-config
+sudo apt install build-essential libasound2-dev libdbus-1-dev pkg-config cargo
 git clone https://github.com/BlueTheBoss/ytermusic
 cd ytermusic
 cargo build --release
