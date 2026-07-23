@@ -552,7 +552,24 @@ impl YoutubeMusicInstance {
                 break;
             }
         }
-        Ok(SearchResults { playlists, videos })
+        Ok(SearchResults { videos, playlists })
+    }
+
+    pub async fn get_watch_playlist(&self, video_id: &str) -> Result<Vec<YoutubeMusicVideoRef>> {
+        let json: Value = serde_json::from_str(
+            &self
+                .browse_raw("next", "videoId", video_id)
+                .await?,
+        )
+        .map_err(YoutubeMusicError::SerdeJson)?;
+        debug!("Watch playlist response: {json}");
+        if json.get("error").is_some() {
+            error!("Error in get_watch_playlist ({video_id})");
+            error!("{json:?}");
+            return Err(YoutubeMusicError::YoutubeMusicError(json));
+        }
+        let videos = from_json(&json, get_video)?;
+        Ok(videos)
     }
 }
 
@@ -589,6 +606,7 @@ pub enum Endpoint {
     MusicLibraryLanding,
     Playlist(String),
     Search(String),
+    Next(String),
 }
 
 impl Endpoint {
@@ -599,6 +617,7 @@ impl Endpoint {
             Endpoint::Playlist(_) => "browseId".to_owned(),
             Endpoint::MusicHome => "browseId".to_owned(),
             Endpoint::Search(_) => "query".to_owned(),
+            Endpoint::Next(_) => "videoId".to_owned(),
         }
     }
     fn get_param(&self) -> String {
@@ -607,6 +626,7 @@ impl Endpoint {
             Endpoint::MusicLibraryLanding => "FEmusic_library_landing".to_owned(),
             Endpoint::Playlist(id) => id.to_owned(),
             Endpoint::Search(query) => query.to_owned(),
+            Endpoint::Next(id) => id.to_owned(),
             Endpoint::MusicHome => "FEmusic_home".to_owned(),
         }
     }
@@ -616,6 +636,7 @@ impl Endpoint {
             Endpoint::MusicLibraryLanding => "browse".to_owned(),
             Endpoint::Playlist(_) => "browse".to_owned(),
             Endpoint::Search(_) => "search".to_owned(),
+            Endpoint::Next(_) => "next".to_owned(),
             Endpoint::MusicHome => "browse".to_owned(),
         }
     }

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::atomic::Ordering,
 };
 
@@ -24,7 +24,7 @@ use crate::{
     structures::{media::Media, sound_action::SoundAction},
     systems::DOWNLOAD_MANAGER,
     term::{list_selector::ListSelector, playlist::PLAYER_RUNNING, ManagerMessage, Screens},
-    DATABASE,
+    AUTH_TOKEN, DATABASE,
 };
 
 pub struct PlayerState {
@@ -45,6 +45,7 @@ pub struct PlayerState {
     pub discord_rpc: DiscordRPC,
     pub scrobbler: Scrobbler,
     last_notified_id: Option<String>,
+    autoplayed_ids: HashSet<String>,
     last_lyrics_id: Option<String>,
     pub fetching_lyrics_id: Option<String>,
     last_download_list: Vec<String>,
@@ -89,6 +90,7 @@ impl PlayerState {
                 listenbrainz_token: CONFIG.scrobble.listenbrainz_token.clone(),
             }),
             last_notified_id: None,
+            autoplayed_ids: HashSet::new(),
             last_lyrics_id: None,
             fetching_lyrics_id: None,
             last_download_list: Vec::new(),
@@ -269,6 +271,31 @@ impl PlayerState {
                     .show();
                 self.scrobbler.now_playing(video);
             }
+
+            let remaining = self.list.len().saturating_sub(self.current + 1);
+            if remaining <= 3
+                && !self.autoplayed_ids.contains(&video.video_id)
+                && !self.sink.is_paused()
+                && !self.sink.is_finished()
+            {
+                self.autoplayed_ids.insert(video.video_id.clone());
+                let video_id = video.video_id.clone();
+                let updater = self.updater.clone();
+                tokio::spawn(async move {
+                    let api = create_api_for_autoplay().await;
+                    let api = match api {
+                        Some(a) => a,
+                        None => return,
+                    };
+                    match api.get_watch_playlist(&video_id).await {
+                        Ok(videos) if !videos.is_empty() => {
+                            let _ = updater.send(ManagerMessage::AutoplayReady(videos));
+                        }
+                        Ok(_) => {}
+                        Err(e) => info!("Autoplay fetch failed: {e:?}"),
+                    }
+                });
+            }
         }
 
         self.discord_rpc.update(video_clone.as_ref(), is_paused, elapsed);
@@ -288,6 +315,25 @@ impl PlayerState {
             .update(current, &self.sink)
             .map_err(|x| format!("{x:?}"));
         handle_error::<String>(&self.updater, "Can't update finished media control", result);
+    }
+}
+
+async fn create_api_for_autoplay() -> Option<ytpapi2::YoutubeMusicInstance> {
+    let token = AUTH_TOKEN.read().ok()?.clone();
+    if let Some(token) = token {
+        if !token.access_token.is_empty() {
+            match ytpapi2::YoutubeMusicInstance::new_oauth(token.access_token).await {
+                Ok(api) => return Some(api),
+                Err(e) => info!("Autoplay OAuth API failed: {e:?}"),
+            }
+        }
+    }
+    match ytpapi2::YoutubeMusicInstance::new_anonymous().await {
+        Ok(api) => Some(api),
+        Err(e) => {
+            info!("Autoplay anonymous API failed: {e:?}");
+            None
+        }
     }
 }
 

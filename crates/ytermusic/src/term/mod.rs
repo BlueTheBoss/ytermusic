@@ -94,6 +94,7 @@ pub enum ManagerMessage {
     LoginError(String),
     SetLyrics(Vec<LyricLine>),
     LyricsFetchFinished(String),
+    AutoplayReady(Vec<YoutubeMusicVideoRef>),
 }
 
 impl ManagerMessage {
@@ -265,6 +266,13 @@ impl Manager {
             ManagerMessage::LyricsFetchFinished(id) => {
                 if self.music_player.fetching_lyrics_id.as_deref() == Some(&id) {
                     self.music_player.fetching_lyrics_id = None;
+                }
+            }
+            ManagerMessage::AutoplayReady(videos) => {
+                for video in videos {
+                    if !self.music_player.list.iter().any(|v| v.video_id == video.video_id) {
+                        self.music_player.list.push(video);
+                    }
                 }
             }
             e => {

@@ -30,24 +30,24 @@ pub fn spawn_api_task(updater_s: Sender<ManagerMessage>) {
         let api = Arc::new(api);
         let mut set = JoinSet::new();
 
-        if AUTH_TOKEN.read().unwrap().is_some() {
-            let api_ = api.clone();
-            let updater_s_ = updater_s.clone();
-            set.spawn(async move {
-                match api_.get_home(2).await {
-                    Ok(e) => {
-                        for playlist in e.playlists {
-                            spawn_browse_playlist_task(
-                                playlist.clone(),
-                                api_.clone(),
-                                updater_s_.clone(),
-                            )
-                        }
+        let api_ = api.clone();
+        let updater_s_ = updater_s.clone();
+        set.spawn(async move {
+            match api_.get_home(2).await {
+                Ok(e) => {
+                    for playlist in e.playlists {
+                        spawn_browse_playlist_task(
+                            playlist.clone(),
+                            api_.clone(),
+                            updater_s_.clone(),
+                        )
                     }
-                    Err(e) => error!("get_home {e:?}"),
                 }
-            });
+                Err(e) => error!("get_home {e:?}"),
+            }
+        });
 
+        if AUTH_TOKEN.read().unwrap().is_some() {
             let api_ = api.clone();
             let updater_s_ = updater_s.clone();
             set.spawn(async move {
@@ -81,8 +81,6 @@ pub fn spawn_api_task(updater_s: Sender<ManagerMessage>) {
                     Err(e) => error!("MusicLibraryLanding -> {e:?}"),
                 }
             });
-        } else {
-            info!("Running in anonymous mode — skipping home/library API calls");
         }
 
         while let Some(e) = set.join_next().await {
