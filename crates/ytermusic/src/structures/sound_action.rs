@@ -85,7 +85,9 @@ impl SoundAction {
             Self::Cleanup => {
                 player.list.clear();
                 player.current = 0;
+                player.rtcurrent = None;
                 player.music_status.clear();
+                player.last_download_list.clear();
                 player.sink.stop();
             }
             Self::Plus => player.sink.volume_up(),
@@ -100,19 +102,18 @@ impl SoundAction {
                 player.music_status.insert(video, status);
             }
             Self::AddVideosToQueue(video) => {
-                if let Some(db) = DATABASE.read() {
-                    for v in video {
-                        Self::insert(
-                            player,
-                            v.video_id.clone(),
-                            if db.iter().any(|e| e.video_id == v.video_id) {
-                                MusicDownloadStatus::Downloaded
-                            } else {
-                                MusicDownloadStatus::NotDownloaded
-                            },
-                        );
-                        player.list.push(v)
-                    }
+                let db = DATABASE.read().unwrap_or_default();
+                for v in video {
+                    Self::insert(
+                        player,
+                        v.video_id.clone(),
+                        if db.iter().any(|e| e.video_id == v.video_id) {
+                            MusicDownloadStatus::Downloaded
+                        } else {
+                            MusicDownloadStatus::NotDownloaded
+                        },
+                    );
+                    player.list.push(v)
                 }
             }
             Self::Previous(a) => {
@@ -212,6 +213,7 @@ impl SoundAction {
             }
             Self::ReplaceQueue(videos) => {
                 player.list.truncate(player.current + 1);
+                player.last_download_list.clear();
                 DOWNLOAD_MANAGER.clean(
                     ShutdownSignal,
                     download_manager_handler(player.soundaction_sender.clone()),

@@ -49,7 +49,7 @@ pub struct PlayerState {
     autoplayed_ids: HashSet<String>,
     last_lyrics_id: Option<String>,
     pub fetching_lyrics_id: Option<String>,
-    last_download_list: Vec<String>,
+    pub last_download_list: Vec<String>,
 }
 
 impl PlayerState {
@@ -181,27 +181,30 @@ impl PlayerState {
                 if let Some(video) = self.current().cloned() {
                     let k = CACHE_DIR.join(format!("downloads/{}.mp4", video.video_id));
                     trace!("Attempting to play: {:?}", k);
-                    if let Err(e) = self.sink.play(k.as_path()) {
-                        if matches!(e, PlayError::DecoderError(_)) {
-                            // Cleaning the file
+                    match self.sink.play(k.as_path()) {
+                        Ok(()) => self.rtcurrent = self.current().cloned(),
+                        Err(e) => {
+                            if matches!(e, PlayError::DecoderError(_)) {
+                                // Cleaning the file
 
-                            DATABASE.remove_video(&video);
-                            let mp4_path = k.clone();
-                            let json_path = CACHE_DIR.join(format!("downloads/{}.json", video.video_id));
-                            tokio::task::spawn_blocking(move || {
-                                let _ = std::fs::remove_file(&mp4_path);
-                                let _ = std::fs::remove_file(&json_path);
-                            });
-                            self.current = 0;
-                            DATABASE.write();
-                        } else {
-                            let _ = self.updater.send(ManagerMessage::PassTo(
-                                    Screens::DeviceLost,
-                                    Box::new(ManagerMessage::Error(
-                                        format!("{e:?}"),
-                                        Box::new(None),
-                                    )),
-                                ));
+                                DATABASE.remove_video(&video);
+                                let mp4_path = k.clone();
+                                let json_path = CACHE_DIR.join(format!("downloads/{}.json", video.video_id));
+                                tokio::task::spawn_blocking(move || {
+                                    let _ = std::fs::remove_file(&mp4_path);
+                                    let _ = std::fs::remove_file(&json_path);
+                                });
+                                self.current = 0;
+                                DATABASE.write();
+                            } else {
+                                let _ = self.updater.send(ManagerMessage::PassTo(
+                                        Screens::DeviceLost,
+                                        Box::new(ManagerMessage::Error(
+                                            format!("{e:?}"),
+                                            Box::new(None),
+                                        )),
+                                    ));
+                            }
                         }
                     }
                 }
